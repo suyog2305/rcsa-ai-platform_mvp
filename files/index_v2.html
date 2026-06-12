@@ -1,0 +1,1106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+<title>RCSA Intelligence Platform · Real RAG Demo</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --ink:#0F2240; --ink-2:#1E3A6B;
+    --blue:#1E4FA8; --blue-lt:#EBF1FC; --blue-md:#B5CFF7; --blue-ac:#60A5FA;
+    --teal:#0B7A75; --teal-lt:#E0F5F4;
+    --gold:#B45309; --gold-lt:#FEF3C7;
+    --red:#B91C1C; --red-lt:#FEE2E2;
+    --green:#15803D; --green-lt:#DCFCE7;
+    --purple:#6D28D9; --purple-lt:#EDE9FE;
+    --orange:#C2410C; --orange-lt:#FED7AA;
+    --white:#fff; --bg:#F8FAFC; --gray-lt:#F1F5F9; --gray-md:#E2E8F0;
+    --gray:#64748B; --dark:#1E293B; --border:#CBD5E1;
+    --shadow:0 1px 3px rgba(0,0,0,.06),0 4px 12px rgba(0,0,0,.06);
+  }
+  html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--dark);font-size:14px}
+  .app{max-width:1180px;margin:0 auto;padding:14px}
+
+  /* ── Header ───────────────────────────────────────────────────────── */
+  .hero{background:linear-gradient(135deg,var(--ink) 0%,var(--ink-2) 100%);border-radius:14px;
+    padding:22px 28px;margin-bottom:14px;box-shadow:0 4px 20px rgba(0,0,0,.18);position:relative;overflow:hidden}
+  .hero::after{content:"";position:absolute;top:-30%;right:-10%;width:300px;height:300px;
+    background:radial-gradient(circle,rgba(96,165,250,.18) 0%,transparent 70%);border-radius:50%}
+  .hero-brand{display:flex;align-items:center;gap:14px;margin-bottom:14px;position:relative;z-index:1}
+  .hero-logo{width:46px;height:46px;border-radius:10px;background:var(--blue);display:flex;
+    align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#fff;letter-spacing:-1px}
+  .hero-title{font-size:20px;font-weight:700;color:#fff}
+  .hero-sub{font-size:12px;color:#94A3B8;margin-top:2px}
+  .hero-tags{display:flex;gap:8px;flex-wrap:wrap;position:relative;z-index:1}
+  .tag{padding:5px 11px;font-size:11px;background:rgba(255,255,255,.08);color:#CADCFC;
+    border-radius:8px;font-weight:500;border:1px solid rgba(255,255,255,.1)}
+  .tag-live{background:rgba(34,197,94,.2);color:#86EFAC;border-color:rgba(34,197,94,.3)}
+  .tag-live::before{content:"●";margin-right:5px;animation:pulse 2s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  /* ── API Setup Panel ──────────────────────────────────────────────── */
+  #setup{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;
+    margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end}
+  #setup.connected{display:none}
+  .field label{font-size:10px;font-weight:600;color:var(--gray);margin-bottom:4px;display:block;
+    text-transform:uppercase;letter-spacing:.05em}
+  .input{width:100%;padding:9px 12px;border:1.5px solid var(--border);border-radius:6px;font-size:13px;
+    font-family:inherit;outline:none;transition:border-color .15s}
+  .input:focus{border-color:var(--blue)}
+  .btn{padding:9px 18px;background:var(--blue);color:#fff;border:none;border-radius:6px;
+    font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .15s;white-space:nowrap}
+  .btn:hover{background:#1843A0}
+  .btn:disabled{opacity:.5;cursor:not-allowed}
+  .btn-ghost{background:#fff;color:var(--ink);border:1px solid var(--border)}
+  .btn-ghost:hover{background:var(--gray-lt)}
+  .btn-success{background:var(--green)}
+  .btn-success:hover{background:#0E6B33}
+
+  /* ── Tabs ─────────────────────────────────────────────────────────── */
+  .tabs{display:none;background:#fff;border:1px solid var(--border);border-radius:12px;padding:6px;
+    margin-bottom:14px;box-shadow:var(--shadow);gap:6px}
+  .tabs.show{display:flex}
+  .tab{flex:1;padding:11px 14px;background:transparent;border:none;border-radius:8px;font-size:13px;
+    font-weight:600;color:var(--gray);cursor:pointer;font-family:inherit;transition:all .15s;
+    display:flex;align-items:center;justify-content:center;gap:8px}
+  .tab:hover{background:var(--gray-lt);color:var(--ink)}
+  .tab.active{background:var(--blue);color:#fff}
+  .tab.active:hover{background:var(--blue)}
+
+  /* ── KB Panel ─────────────────────────────────────────────────────── */
+  #kb{background:#fff;border:1px solid var(--border);border-radius:12px;padding:12px 14px;
+    margin-bottom:14px;box-shadow:var(--shadow);display:none}
+  #kb.show{display:block}
+  .kb-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .kb-title{font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.05em;
+    display:flex;align-items:center;gap:6px}
+  .kb-badge{font-size:10px;padding:3px 9px;border-radius:8px;background:var(--green-lt);color:var(--green);
+    font-weight:700}
+  .kb-docs{display:flex;gap:6px;flex-wrap:wrap}
+  .kb-doc{font-size:10px;padding:4px 9px;border-radius:8px;background:var(--gray-lt);color:var(--gray);
+    border:1px solid var(--border);transition:all .25s;cursor:default}
+  .kb-doc.active{background:var(--blue);color:#fff;border-color:var(--blue);transform:scale(1.05);
+    box-shadow:0 2px 8px rgba(30,79,168,.4)}
+
+  /* ── View visibility ──────────────────────────────────────────────── */
+  .view{display:none}
+  .view.show{display:block}
+
+  /* ── Chat Layout (AI Interview view) ──────────────────────────────── */
+  .main{display:grid;grid-template-columns:1fr 320px;gap:14px;align-items:start}
+  @media(max-width:900px){.main{grid-template-columns:1fr}}
+  .panel{background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);overflow:hidden}
+
+  .chat-head{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+  .chat-agent{display:flex;align-items:center;gap:10px}
+  .chat-av{width:36px;height:36px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center;font-size:18px}
+  .chat-name{font-size:13px;font-weight:600;color:var(--ink)}
+  .chat-meta{font-size:11px;color:var(--gray);margin-top:1px}
+  .chat-status{font-size:11px;color:var(--green);display:flex;align-items:center;gap:5px}
+  .chat-status::before{content:"●";color:var(--green);animation:pulse 2s infinite}
+
+  .msgs{height:440px;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:14px;background:var(--bg)}
+  .msgs::-webkit-scrollbar{width:5px}
+  .msgs::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+  .msg{display:flex;gap:10px;max-width:92%;animation:in .25s ease}
+  @keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+  .msg.user{flex-direction:row-reverse;align-self:flex-end}
+  .msg-av{width:30px;height:30px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;margin-top:2px}
+  .msg-bubble{padding:11px 15px;border-radius:12px;font-size:13px;line-height:1.65;border:1px solid var(--border)}
+  .msg.agent .msg-av{background:var(--blue);color:#fff}
+  .msg.agent .msg-bubble{background:#fff;color:var(--dark);border-radius:4px 12px 12px 12px}
+  .msg.user .msg-av{background:var(--gray-md);color:var(--gray)}
+  .msg.user .msg-bubble{background:var(--blue);color:#fff;border-color:var(--blue);border-radius:12px 4px 12px 12px}
+  .msg-time{font-size:10px;color:var(--gray);margin-top:4px}
+  .msg.user .msg-time{text-align:right}
+
+  /* Retrieval inline */
+  .retrieval{margin-top:10px;background:var(--ink);border-radius:8px;padding:10px 12px;font-size:10px;
+    font-family:'Consolas','Courier New',monospace;color:#86EFAC}
+  .retr-head{color:#60A5FA;font-size:10px;margin-bottom:6px;font-weight:700;letter-spacing:.04em}
+  .retr-row{display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;color:#CBD5E1}
+  .retr-sim{color:#FBBF24;font-weight:700;min-width:54px}
+  .retr-src{color:#86EFAC;flex:1}
+
+  /* Typing */
+  .typing{display:flex;gap:10px}
+  .typing-bubble{padding:13px 17px;background:#fff;border:1px solid var(--border);border-radius:4px 12px 12px 12px;
+    display:flex;gap:5px;align-items:center}
+  .tdot{width:7px;height:7px;border-radius:50%;background:var(--border);animation:tdot 1.3s infinite}
+  .tdot:nth-child(2){animation-delay:.18s}.tdot:nth-child(3){animation-delay:.36s}
+  @keyframes tdot{0%,80%,100%{transform:scale(.7);opacity:.3}40%{transform:scale(1);opacity:1}}
+
+  /* Input */
+  .input-wrap{padding:12px;border-top:1px solid var(--border);background:#fff;display:flex;gap:8px;align-items:flex-end}
+  .chat-input{flex:1;border:1.5px solid var(--border);border-radius:8px;padding:9px 13px;font-size:13px;
+    background:var(--gray-lt);font-family:inherit;resize:none;min-height:40px;max-height:120px;outline:none}
+  .chat-input:focus{border-color:var(--blue);background:#fff}
+  .chat-input:disabled{opacity:.4;cursor:not-allowed}
+
+  /* Sidebar */
+  .side{display:flex;flex-direction:column;gap:14px}
+  .info-card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
+  .info-title{font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+  .info-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--gray-lt);font-size:12px}
+  .info-row:last-child{border:none}
+  .info-row .lbl{color:var(--gray)}
+  .info-row .val{color:var(--dark);font-weight:600}
+
+  .demo-prompts{background:var(--blue-lt);border:1px solid var(--blue-md);border-radius:12px;padding:14px}
+  .demo-prompts h3{font-size:11px;font-weight:700;color:var(--blue);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+  .demo-prompts p{font-size:11px;color:var(--dark);margin-bottom:8px;line-height:1.4}
+  .prompt-btn{display:block;width:100%;text-align:left;padding:7px 10px;background:#fff;border:1px solid var(--blue-md);
+    border-radius:6px;font-size:11px;cursor:pointer;color:var(--ink);margin-bottom:5px;font-family:inherit;
+    transition:all .15s}
+  .prompt-btn:hover{background:var(--blue);color:#fff;border-color:var(--blue)}
+
+  .arch-card{background:linear-gradient(135deg,var(--ink) 0%,var(--ink-2) 100%);color:#fff;border-radius:12px;
+    padding:14px;box-shadow:var(--shadow)}
+  .arch-card h3{font-size:11px;font-weight:700;color:var(--blue-ac);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+  .arch-flow{font-size:11px;line-height:1.8;color:#CADCFC}
+  .arch-flow strong{color:#fff}
+
+  .err-banner{background:var(--red-lt);color:var(--red);padding:10px 14px;border-radius:8px;font-size:12px;
+    margin-bottom:10px;border:1px solid #FCA5A5}
+
+  /* ─────────────────────────────────────────────────────────────────── */
+  /* ── RCSA OUTPUT VIEW STYLES ──────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────────────────────── */
+  .output-panel{background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);
+    overflow:hidden}
+  .output-head{padding:16px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;
+    justify-content:space-between;flex-wrap:wrap;gap:12px}
+  .output-title-block{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+  .output-title{font-size:16px;font-weight:700;color:var(--ink)}
+  .output-meta{font-size:11px;color:var(--gray);font-weight:500}
+  .output-actions{display:flex;gap:8px}
+  .output-actions .btn{padding:8px 14px;font-size:12px}
+
+  .empty-state{padding:50px 30px;text-align:center;color:var(--gray)}
+  .empty-state .emoji{font-size:40px;margin-bottom:10px}
+  .empty-state h3{font-size:16px;color:var(--ink);margin-bottom:8px}
+  .empty-state p{font-size:12px;margin-bottom:14px;line-height:1.6;max-width:380px;margin-left:auto;margin-right:auto}
+
+  /* Scorecards */
+  .scorecards{padding:18px 22px;display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+    background:var(--gray-lt)}
+  .scorecard{background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px 14px;
+    text-align:center}
+  .sc-val{font-size:28px;font-weight:700;line-height:1;margin-bottom:6px;color:var(--ink)}
+  .sc-val.red{color:var(--red)}
+  .sc-val.orange{color:var(--orange)}
+  .sc-val.blue{color:var(--blue)}
+  .sc-lbl{font-size:11px;color:var(--gray);margin-bottom:8px}
+  .sc-pill{display:inline-block;padding:3px 12px;border-radius:8px;font-size:10px;font-weight:700;
+    text-transform:uppercase;letter-spacing:.04em}
+  .pill-high{background:var(--red-lt);color:var(--red)}
+  .pill-medhigh{background:var(--orange-lt);color:var(--orange)}
+  .pill-med{background:var(--gold-lt);color:var(--gold)}
+  .pill-low{background:var(--green-lt);color:var(--green)}
+  .pill-prog{background:var(--blue-lt);color:var(--blue)}
+  .pill-assigned{background:var(--blue-lt);color:var(--blue)}
+
+  /* Heat map + controls grid */
+  .ho-grid{padding:18px 22px;display:grid;grid-template-columns:1fr 1.4fr;gap:16px}
+  @media(max-width:900px){.ho-grid{grid-template-columns:1fr}}
+  .ho-section{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px}
+  .ho-section-title{font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;
+    letter-spacing:.05em;margin-bottom:12px;display:flex;align-items:center;gap:6px}
+
+  /* Heat map */
+  .heatmap{display:grid;grid-template-columns:18px repeat(5,1fr);grid-template-rows:repeat(5,38px) 22px;
+    gap:3px;font-size:11px;margin-bottom:10px}
+  .hm-axis-y{writing-mode:vertical-rl;transform:rotate(180deg);font-size:10px;color:var(--gray);
+    font-weight:600;display:flex;align-items:center;justify-content:center;grid-row:span 5;letter-spacing:.05em}
+  .hm-axis-x{font-size:10px;color:var(--gray);font-weight:600;text-align:center;grid-column:2/7;letter-spacing:.05em;padding-top:4px}
+  .hm-cell{display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;
+    border-radius:4px;position:relative;color:var(--dark)}
+  .hm-low{background:#D1FAE5;color:#065F46}
+  .hm-med{background:#FEF3C7;color:#92400E}
+  .hm-high{background:#FED7AA;color:#7C2D12}
+  .hm-vhigh{background:#FECACA;color:#7F1D1D}
+  .hm-pos{position:absolute;width:14px;height:14px;border-radius:50%;background:#1E40AF;
+    border:2px solid #fff;box-shadow:0 0 0 2px #1E40AF;animation:bounce 2s infinite}
+  @keyframes bounce{0%,100%{transform:scale(1)}50%{transform:scale(1.15)}}
+  .hm-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:10px;color:var(--gray);padding-top:8px;
+    border-top:1px solid var(--gray-lt)}
+  .hm-legend span{display:flex;align-items:center;gap:5px}
+  .hm-legend .sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+
+  /* Control effectiveness rows */
+  .ctrl-row{padding:10px 0;border-bottom:1px solid var(--gray-lt);display:flex;justify-content:space-between;
+    align-items:flex-start;gap:10px}
+  .ctrl-row:last-child{border:none}
+  .ctrl-info{flex:1}
+  .ctrl-name{font-size:12px;font-weight:600;color:var(--ink);margin-bottom:2px}
+  .ctrl-desc{font-size:10.5px;color:var(--gray);line-height:1.4}
+  .ctrl-tested{font-size:10px;color:var(--gray);margin-top:3px;font-style:italic}
+  .ctrl-rating{padding:3px 10px;border-radius:8px;font-size:10px;font-weight:700;white-space:nowrap;
+    flex-shrink:0;text-transform:uppercase;letter-spacing:.04em}
+  .rt-strong{background:var(--green-lt);color:var(--green)}
+  .rt-adequate{background:var(--blue-lt);color:var(--blue)}
+  .rt-weak{background:var(--gold-lt);color:var(--gold)}
+  .rt-ineffective{background:var(--red-lt);color:var(--red)}
+
+  /* 3 lines of defence */
+  .tlod-row{padding:18px 22px}
+  .tlod-section-title{font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;
+    letter-spacing:.05em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .tlod-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:900px){.tlod-grid{grid-template-columns:1fr}}
+  .tlod-card{background:var(--gray-lt);border-radius:10px;padding:14px;border-left:4px solid var(--blue)}
+  .tlod-card.line2{border-left-color:var(--gold)}
+  .tlod-card.line3{border-left-color:var(--purple)}
+  .tlod-card-title{font-size:12px;font-weight:700;color:var(--ink);margin-bottom:6px}
+  .tlod-card-desc{font-size:11px;color:var(--dark);line-height:1.55;margin-bottom:8px}
+  .tlod-validated{font-size:10px;font-weight:700;padding:3px 9px;border-radius:6px;display:inline-block;
+    background:var(--blue);color:#fff}
+  .tlod-card.line2 .tlod-validated{background:var(--gold)}
+  .tlod-card.line3 .tlod-validated{background:var(--purple)}
+
+  /* Priority Actions */
+  .actions-row{padding:18px 22px;border-top:1px solid var(--border)}
+  .action-item{display:flex;gap:14px;padding:12px 0;border-bottom:1px solid var(--gray-lt);align-items:flex-start}
+  .action-item:last-child{border:none}
+  .action-num{width:26px;height:26px;border-radius:50%;background:var(--blue);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;flex-shrink:0}
+  .action-body{flex:1}
+  .action-text{font-size:12.5px;color:var(--ink);font-weight:500;line-height:1.55;margin-bottom:4px}
+  .action-meta{font-size:11px;color:var(--gray);display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+  .action-priority{padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;
+    background:var(--red-lt);color:var(--red)}
+  .action-priority.p2{background:var(--gold-lt);color:var(--gold)}
+  .action-priority.p3{background:var(--blue-lt);color:var(--blue)}
+  .action-ref{font-style:italic;color:var(--gray);font-size:10.5px}
+
+  /* AI Rationale */
+  .rationale-row{padding:18px 22px;background:var(--blue-lt);border-top:1px solid var(--blue-md);
+    border-bottom:1px solid var(--blue-md)}
+  .rationale-title{font-size:11px;font-weight:700;color:var(--blue);text-transform:uppercase;
+    letter-spacing:.05em;margin-bottom:10px;display:flex;align-items:center;gap:6px}
+  .rationale-text{font-size:12.5px;color:var(--dark);line-height:1.7;margin-bottom:12px}
+  .evidence-list{list-style:none;padding:0;margin:0}
+  .evidence-list li{font-size:11.5px;color:var(--dark);line-height:1.6;padding:3px 0;padding-left:14px;
+    position:relative}
+  .evidence-list li::before{content:"›";position:absolute;left:0;color:var(--blue);font-weight:700}
+
+  /* Bottom action bar */
+  .ho-bottom{padding:14px 22px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;background:var(--gray-lt);
+    border-top:1px solid var(--border)}
+  @media(max-width:700px){.ho-bottom{grid-template-columns:1fr}}
+  .ho-bottom .btn{justify-content:center;display:flex;align-items:center;gap:6px}
+
+  /* ─────────────────────────────────────────────────────────────────── */
+  /* ── DASHBOARD VIEW STYLES ────────────────────────────────────────── */
+  /* ─────────────────────────────────────────────────────────────────── */
+  .dash-panel{background:#fff;border:1px solid var(--border);border-radius:14px;box-shadow:var(--shadow);
+    overflow:hidden}
+  .dash-head{padding:16px 22px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;
+    align-items:center;flex-wrap:wrap;gap:10px}
+  .dash-title{font-size:16px;font-weight:700;color:var(--ink)}
+  .dash-sub{font-size:11px;color:var(--gray);font-weight:500;margin-top:2px}
+
+  .dash-stats{padding:18px 22px;display:grid;grid-template-columns:repeat(4,1fr);gap:14px;background:var(--gray-lt)}
+  @media(max-width:700px){.dash-stats{grid-template-columns:repeat(2,1fr)}}
+  .dash-stat{background:#fff;border:1px solid var(--border);border-radius:10px;padding:18px 14px;text-align:center}
+  .dash-stat-val{font-size:30px;font-weight:700;line-height:1;margin-bottom:6px}
+  .dash-stat-val.blue{color:var(--blue)}
+  .dash-stat-val.red{color:var(--red)}
+  .dash-stat-val.orange{color:var(--orange)}
+  .dash-stat-val.green{color:var(--green)}
+  .dash-stat-lbl{font-size:11px;color:var(--gray);font-weight:500}
+
+  /* Business unit heat map */
+  .bu-section{padding:18px 22px;border-top:1px solid var(--border)}
+  .bu-section-title{font-size:11px;font-weight:700;color:var(--ink);text-transform:uppercase;letter-spacing:.05em;
+    margin-bottom:12px;display:flex;align-items:center;gap:6px}
+  .bu-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+  @media(max-width:900px){.bu-grid{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:600px){.bu-grid{grid-template-columns:repeat(2,1fr)}}
+  .bu-card{padding:14px 10px;border-radius:8px;text-align:center;border:1px solid transparent}
+  .bu-card-name{font-size:11px;font-weight:600;margin-bottom:5px;line-height:1.3}
+  .bu-card-rating{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .bu-high{background:var(--red-lt);color:var(--red);border-color:#FCA5A5}
+  .bu-medium{background:var(--gold-lt);color:var(--gold);border-color:#FCD34D}
+  .bu-low{background:var(--green-lt);color:var(--green);border-color:#86EFAC}
+  .bu-prog{background:var(--blue-lt);color:var(--blue);border-color:var(--blue-md)}
+
+  /* Bottom grid: Risk Categories + Cycle Time */
+  .dash-bottom{padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;gap:16px;border-top:1px solid var(--border)}
+  @media(max-width:800px){.dash-bottom{grid-template-columns:1fr}}
+  .dash-bottom-card{background:#fff;border:1px solid var(--border);border-radius:10px;padding:14px}
+
+  .risk-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;font-size:12px}
+  .risk-row .nm{color:var(--ink);font-weight:600}
+  .risk-row .val{color:var(--dark);font-weight:700;font-size:13px}
+  .risk-bar{height:8px;background:var(--gray-lt);border-radius:4px;overflow:hidden;margin-bottom:14px}
+  .risk-bar-fill{height:100%;border-radius:4px;transition:width .8s}
+  .risk-fill-1{background:#FCA5A5}
+  .risk-fill-2{background:#FCA5A5}
+  .risk-fill-3{background:#FCD34D}
+  .risk-fill-4{background:#FCD34D}
+  .risk-fill-5{background:#FCD34D}
+  .risk-fill-6{background:#86EFAC}
+
+  .cycle-row{margin-bottom:14px}
+  .cycle-row .lbl{font-size:11px;color:var(--gray);margin-bottom:4px;display:flex;justify-content:space-between}
+  .cycle-row .lbl .days{font-weight:700;color:var(--ink)}
+  .cycle-row .lbl .days.red{color:var(--red)}
+  .cycle-row .lbl .days.orange{color:var(--orange)}
+  .cycle-row .lbl .days.green{color:var(--green)}
+  .cycle-bar{height:10px;background:var(--gray-lt);border-radius:5px;overflow:hidden}
+  .cycle-bar-fill{height:100%;transition:width .8s}
+  .cycle-fill-red{background:#FCA5A5}
+  .cycle-fill-orange{background:#FCD34D}
+  .cycle-fill-green{background:#86EFAC}
+  .reduction-banner{background:var(--green-lt);color:var(--green);border-radius:8px;padding:10px;
+    text-align:center;font-size:12px;font-weight:600;margin-top:10px;border:1px solid #86EFAC}
+
+  /* Loading spinner */
+  .loading{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px;color:var(--gray)}
+  .loader{width:32px;height:32px;border:3px solid var(--gray-lt);border-top-color:var(--blue);border-radius:50%;
+    animation:spin 1s linear infinite;margin-bottom:14px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="hero">
+    <div class="hero-brand">
+      <div class="hero-logo">AI</div>
+      <div style="flex:1">
+        <div class="hero-title">RCSA Intelligence Platform</div>
+        <div class="hero-sub">Real-time AI-powered Risk &amp; Control Self-Assessment · Banking Domain</div>
+      </div>
+      <span class="tag tag-live" id="live-tag">CONNECTING</span>
+    </div>
+    <div class="hero-tags">
+      <span class="tag">GPT-4o</span>
+      <span class="tag">ChromaDB Vector RAG</span>
+      <span class="tag">FastAPI Backend</span>
+      <span class="tag">Real Document Retrieval</span>
+      <span class="tag">Banking Controls</span>
+    </div>
+  </div>
+
+  <div id="setup">
+    <div class="field">
+      <label>Backend API URL</label>
+      <input type="text" id="api-url" class="input"
+        placeholder="https://your-backend.up.railway.app  (or http://localhost:8000)"
+        value="http://localhost:8000"/>
+    </div>
+    <div class="field">
+      <label>Status</label>
+      <input type="text" id="status-display" class="input" readonly value="Not connected" style="background:var(--gray-lt)"/>
+    </div>
+    <button class="btn" id="connect-btn" onclick="connect()">🔌 Connect</button>
+  </div>
+
+  <div id="error-banner" class="err-banner" style="display:none"></div>
+
+  <!-- ── Tab Navigation ─────────────────────────────────────────────── -->
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-view="interview" onclick="switchView('interview')">
+      💬 AI Interview
+    </button>
+    <button class="tab" data-view="output" onclick="switchView('output')">
+      📄 RCSA Output
+    </button>
+    <button class="tab" data-view="dashboard" onclick="switchView('dashboard')">
+      📊 Risk Dashboard
+    </button>
+  </div>
+
+  <!-- ── Knowledge Base Panel (only on Interview view) ───────────────── -->
+  <div id="kb">
+    <div class="kb-head">
+      <div class="kb-title">🗄 Knowledge Base · Live Vector Store</div>
+      <span class="kb-badge" id="kb-count">— documents indexed</span>
+    </div>
+    <div class="kb-docs" id="kb-docs"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       VIEW 1: AI INTERVIEW (original chat interface)
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div class="view show" id="view-interview">
+    <div class="main">
+      <div class="panel">
+        <div class="chat-head">
+          <div class="chat-agent">
+            <div class="chat-av">🤖</div>
+            <div>
+              <div class="chat-name">RCSA Agent</div>
+              <div class="chat-meta">GPT-4o · Real RAG · Banking Knowledge Base</div>
+            </div>
+          </div>
+          <div class="chat-status" id="chat-status">Ready</div>
+        </div>
+
+        <div class="msgs" id="msgs">
+          <div style="text-align:center;padding:60px 20px;color:var(--gray);font-size:13px">
+            Connect your backend URL above to begin a live interview.<br>
+            <span style="font-size:11px">The agent will retrieve from your control documents in real time.</span>
+          </div>
+        </div>
+
+        <div class="input-wrap">
+          <textarea class="chat-input" id="chat-input"
+            placeholder="Connect backend first, then type your response..."
+            disabled
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
+          <button class="btn" id="send-btn" onclick="sendMsg()" disabled>Send</button>
+        </div>
+      </div>
+
+      <div class="side">
+        <div class="info-card">
+          <div class="info-title">📊 Session</div>
+          <div class="info-row"><span class="lbl">Model</span><span class="val">GPT-4o</span></div>
+          <div class="info-row"><span class="lbl">Backend</span><span class="val" id="info-backend">—</span></div>
+          <div class="info-row"><span class="lbl">Documents</span><span class="val" id="info-docs">—</span></div>
+          <div class="info-row"><span class="lbl">Chunks</span><span class="val" id="info-chunks">—</span></div>
+          <div class="info-row"><span class="lbl">Messages</span><span class="val" id="info-msgs">0</span></div>
+        </div>
+
+        <div class="demo-prompts">
+          <h3>💡 Try these</h3>
+          <p>Click any to send — real GPT-4o, real retrieval:</p>
+          <button class="prompt-btn" onclick="loadPrompt(this)">What are our biggest operational risks in retail loan origination?</button>
+          <button class="prompt-btn" onclick="loadPrompt(this)">Tell me about the GENIUS Act compliance gap in our liveness model</button>
+          <button class="prompt-btn" onclick="loadPrompt(this)">What controls relate to KYC and FinCEN CDD compliance?</button>
+          <button class="prompt-btn" onclick="loadPrompt(this)">Give me a full risk assessment summary with scores</button>
+        </div>
+
+        <div class="arch-card">
+          <h3>🏗 Architecture</h3>
+          <div class="arch-flow">
+            <strong>1.</strong> User question →<br>
+            <strong>2.</strong> Embedding (text-embed-3-small) →<br>
+            <strong>3.</strong> ChromaDB semantic search →<br>
+            <strong>4.</strong> Top-4 chunks retrieved →<br>
+            <strong>5.</strong> GPT-4o with context →<br>
+            <strong>6.</strong> Cited response delivered
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       VIEW 2: RCSA OUTPUT (auto-generated assessment)
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div class="view" id="view-output">
+    <div class="output-panel" id="output-panel">
+
+      <!-- Header -->
+      <div class="output-head">
+        <div class="output-title-block">
+          <div class="output-title" id="output-title">Auto-Generated RCSA — Retail Banking Division</div>
+          <div class="output-meta">
+            <span>AI-drafted · Pending 1st Line approval · </span>
+            <span id="output-date">—</span>
+          </div>
+        </div>
+        <div class="output-actions">
+          <button class="btn btn-ghost" onclick="exportRCSA()">📥 Export to GRC</button>
+          <button class="btn" onclick="generateRCSA()" id="gen-output-btn">🔄 Re-generate from interview</button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="output-empty">
+        <div class="emoji">📋</div>
+        <h3>No assessment generated yet</h3>
+        <p>Have a conversation with the AI agent in the Interview tab, then click <strong>Generate from interview</strong> to produce a structured RCSA output for the Risk Committee.</p>
+        <button class="btn" onclick="generateRCSA()">⚡ Generate from interview</button>
+      </div>
+
+      <!-- Loading state -->
+      <div class="loading" id="output-loading" style="display:none">
+        <div class="loader"></div>
+        <div style="font-size:13px;color:var(--gray)">Synthesising RCSA assessment from your interview...</div>
+        <div style="font-size:11px;color:var(--gray);margin-top:4px">GPT-4o is analysing the conversation and scoring risk</div>
+      </div>
+
+      <!-- Actual content (hidden until generated) -->
+      <div id="output-content" style="display:none">
+        <!-- Score cards -->
+        <div class="scorecards">
+          <div class="scorecard">
+            <div class="sc-val red" id="sc-inherent">—</div>
+            <div class="sc-lbl">Inherent Risk Score</div>
+            <span class="sc-pill pill-high" id="sc-inherent-label">HIGH</span>
+          </div>
+          <div class="scorecard">
+            <div class="sc-val orange" id="sc-residual">—</div>
+            <div class="sc-lbl">Residual Risk Score</div>
+            <span class="sc-pill pill-medhigh" id="sc-residual-label">MEDIUM-HIGH</span>
+          </div>
+          <div class="scorecard">
+            <div class="sc-val blue" id="sc-actions">—</div>
+            <div class="sc-lbl">Priority Action Items</div>
+            <span class="sc-pill pill-assigned">ASSIGNED</span>
+          </div>
+        </div>
+
+        <!-- Heat map + Detective controls -->
+        <div class="ho-grid">
+          <div class="ho-section">
+            <div class="ho-section-title">📈 Risk Heat Map (5×5 matrix)</div>
+            <div class="heatmap" id="heatmap"></div>
+            <div class="hm-legend">
+              <span><span class="sw hm-vhigh"></span>High</span>
+              <span><span class="sw hm-high"></span>Medium</span>
+              <span><span class="sw hm-low"></span>Low</span>
+              <span><span class="sw" style="background:#1E40AF"></span>Current position</span>
+            </div>
+          </div>
+
+          <div class="ho-section">
+            <div class="ho-section-title">🛡 Detective Control Effectiveness (2026)</div>
+            <div id="detective-controls"></div>
+          </div>
+        </div>
+
+        <!-- 3 Lines of Defence -->
+        <div class="tlod-row">
+          <div class="tlod-section-title">🔄 Three-Lines-of-Defence Testing Cycle — Last Validated Dates</div>
+          <div class="tlod-grid" id="tlod-grid"></div>
+        </div>
+
+        <!-- Priority Action Plan -->
+        <div class="actions-row">
+          <div class="ho-section-title">✓ Priority Action Plan — AI Generated</div>
+          <div id="priority-actions"></div>
+        </div>
+
+        <!-- AI Rationale -->
+        <div class="rationale-row">
+          <div class="rationale-title">ℹ AI Scoring Rationale &amp; Evidence Trace</div>
+          <div class="rationale-text" id="rationale-text">—</div>
+          <ul class="evidence-list" id="evidence-list"></ul>
+        </div>
+
+        <!-- Bottom actions -->
+        <div class="ho-bottom">
+          <button class="btn btn-ghost" onclick="alert('Demo: would open revision UI')">↻ Request Revision</button>
+          <button class="btn btn-ghost" onclick="alert('Demo: would route to 2nd Line of Defence')">→ Route to 2nd Line</button>
+          <button class="btn btn-success" onclick="alert('Demo: would submit to SharePoint / GRC')">✓ Approve &amp; Submit to SharePoint</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════════════════
+       VIEW 3: RISK DASHBOARD (enterprise portfolio view)
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div class="view" id="view-dashboard">
+    <div class="dash-panel">
+      <div class="dash-head">
+        <div>
+          <div class="dash-title">Enterprise Risk Dashboard — RCSA Portfolio View</div>
+          <div class="dash-sub">Real-time · 12 Business Units · FY 2026 Q2</div>
+        </div>
+        <button class="btn btn-ghost" onclick="generateDashboard()" id="gen-dash-btn">🔄 Refresh</button>
+      </div>
+
+      <!-- Loading state -->
+      <div class="loading" id="dash-loading">
+        <div class="loader"></div>
+        <div style="font-size:13px;color:var(--gray)">Loading enterprise portfolio data...</div>
+      </div>
+
+      <!-- Dashboard content -->
+      <div id="dash-content" style="display:none">
+        <!-- Top stats -->
+        <div class="dash-stats">
+          <div class="dash-stat">
+            <div class="dash-stat-val blue" id="ds-bus">—</div>
+            <div class="dash-stat-lbl">Business Units in Scope</div>
+          </div>
+          <div class="dash-stat">
+            <div class="dash-stat-val red" id="ds-high">—</div>
+            <div class="dash-stat-lbl">High Risk BUs</div>
+          </div>
+          <div class="dash-stat">
+            <div class="dash-stat-val orange" id="ds-actions">—</div>
+            <div class="dash-stat-lbl">Open Action Items</div>
+          </div>
+          <div class="dash-stat">
+            <div class="dash-stat-val green" id="ds-effective">—</div>
+            <div class="dash-stat-lbl">Controls Rated Effective</div>
+          </div>
+        </div>
+
+        <!-- BU heat map -->
+        <div class="bu-section">
+          <div class="bu-section-title">🗺 Business Unit Residual Risk Heat Map</div>
+          <div class="bu-grid" id="bu-grid"></div>
+        </div>
+
+        <!-- Risk categories + Cycle time -->
+        <div class="dash-bottom">
+          <div class="dash-bottom-card">
+            <div class="bu-section-title">📊 Top Risk Categories — Exposure Index</div>
+            <div id="risk-categories"></div>
+          </div>
+
+          <div class="dash-bottom-card">
+            <div class="bu-section-title">⏱ Cycle Time: Manual vs. AI-Assisted</div>
+            <div style="font-size:11px;color:var(--gray);margin-bottom:14px">Average days to complete full RCSA cycle</div>
+            <div id="cycle-time"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let API_URL = "";
+let connected = false;
+let conversation = [];
+let kbDocs = [];
+let currentView = "interview";
+let rcsaGenerated = false;
+let dashGenerated = false;
+
+// ─── Connection ──────────────────────────────────────────────────
+async function connect(){
+  API_URL = document.getElementById("api-url").value.trim().replace(/\/$/, "");
+  if(!API_URL){ showError("Please enter your backend API URL"); return; }
+
+  document.getElementById("status-display").value = "Connecting...";
+  document.getElementById("connect-btn").disabled = true;
+
+  try {
+    const health = await fetch(`${API_URL}/`).then(r => r.json());
+    const kb = await fetch(`${API_URL}/knowledge_base`).then(r => r.json());
+
+    connected = true;
+    document.getElementById("setup").classList.add("connected");
+    document.getElementById("live-tag").textContent = "LIVE";
+    document.getElementById("chat-status").textContent = "Live · Ready";
+    document.getElementById("kb").classList.add("show");
+    document.getElementById("tabs").classList.add("show");
+    document.getElementById("kb-count").textContent = `${kb.total_documents} docs · ${kb.total_chunks} chunks`;
+    document.getElementById("info-backend").textContent = "Connected";
+    document.getElementById("info-docs").textContent = kb.total_documents;
+    document.getElementById("info-chunks").textContent = kb.total_chunks;
+    document.getElementById("chat-input").disabled = false;
+    document.getElementById("send-btn").disabled = false;
+
+    kbDocs = kb.documents;
+    renderKBDocs();
+
+    document.getElementById("msgs").innerHTML = "";
+    await startInterview();
+    hideError();
+  } catch(err){
+    showError(`Connection failed: ${err.message}. Make sure the backend is running and OPENAI_API_KEY is set.`);
+    document.getElementById("connect-btn").disabled = false;
+    document.getElementById("status-display").value = "Failed";
+  }
+}
+
+function renderKBDocs(){
+  document.getElementById("kb-docs").innerHTML = kbDocs.map(d => `
+    <span class="kb-doc" id="kb-${d.source}" title="${d.doc_type} · ${d.chunk_count} chunks">
+      📄 ${d.control_id}
+    </span>
+  `).join("");
+}
+
+// ─── Tab Navigation ──────────────────────────────────────────────
+function switchView(view){
+  currentView = view;
+  document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.view === view));
+  document.querySelectorAll(".view").forEach(v => v.classList.remove("show"));
+  document.getElementById(`view-${view}`).classList.add("show");
+
+  // Show/hide KB panel — only visible on interview view
+  document.getElementById("kb").style.display = view === "interview" ? "" : "none";
+
+  // Auto-load dashboard data first time it's opened
+  if(view === "dashboard" && !dashGenerated && connected){
+    generateDashboard();
+  }
+}
+
+// ─── Interview view ──────────────────────────────────────────────
+async function startInterview(){
+  const opening = `Good morning. I'm conducting today's RCSA assessment for the Retail Banking Division. I have ${kbDocs.length} control documents indexed and ready for retrieval. To get started — what would you say are your top operational risks in retail loan origination right now?`;
+  appendMessage("agent", opening);
+  conversation.push({ role: "assistant", content: opening });
+}
+
+async function sendMsg(){
+  if(!connected) return;
+  const input = document.getElementById("chat-input");
+  const text = input.value.trim();
+  if(!text) return;
+
+  appendMessage("user", text);
+  conversation.push({ role: "user", content: text });
+  input.value = "";
+  document.getElementById("info-msgs").textContent = conversation.filter(m=>m.role==="user").length;
+
+  document.getElementById("chat-input").disabled = true;
+  document.getElementById("send-btn").disabled = true;
+  showTyping();
+
+  try {
+    const res = await fetch(`${API_URL}/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: conversation })
+    });
+    if(!res.ok){
+      const errText = await res.text();
+      throw new Error(`API error ${res.status}: ${errText}`);
+    }
+    const data = await res.json();
+
+    removeTyping();
+    appendMessage("agent", data.response, data.retrieved_chunks);
+    conversation.push({ role: "assistant", content: data.response });
+
+    highlightRetrieved(data.retrieved_chunks);
+  } catch(err){
+    removeTyping();
+    appendMessage("agent", `⚠ ${err.message}`);
+  }
+
+  document.getElementById("chat-input").disabled = false;
+  document.getElementById("send-btn").disabled = false;
+  document.getElementById("chat-input").focus();
+}
+
+function appendMessage(role, text, chunks){
+  const msgs = document.getElementById("msgs");
+  const div = document.createElement("div");
+  div.className = `msg ${role}`;
+  const time = new Date().toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+
+  let retrievalHtml = "";
+  if(chunks && chunks.length > 0){
+    retrievalHtml = `
+      <div class="retrieval">
+        <div class="retr-head">⚡ Retrieved ${chunks.length} chunks from vector store</div>
+        ${chunks.map(c => `
+          <div class="retr-row">
+            <span class="retr-sim">${(c.similarity*100).toFixed(1)}%</span>
+            <span class="retr-src">${c.source} · ${c.doc_type}</span>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  div.innerHTML = `
+    <div class="msg-av" style="background:${role==='agent'?'var(--blue)':'var(--gray-md)'};color:${role==='agent'?'#fff':'var(--gray)'}">
+      ${role==='agent'?'🤖':'👤'}
+    </div>
+    <div>
+      <div class="msg-bubble">${escapeHtml(text).replace(/\n/g,'<br>')}${retrievalHtml}</div>
+      <div class="msg-time">${time}</div>
+    </div>
+  `;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function highlightRetrieved(chunks){
+  document.querySelectorAll(".kb-doc").forEach(el => el.classList.remove("active"));
+  chunks.forEach(c => {
+    const el = document.getElementById(`kb-${c.source}`);
+    if(el) el.classList.add("active");
+  });
+}
+
+function showTyping(){
+  const msgs = document.getElementById("msgs");
+  const div = document.createElement("div");
+  div.className = "msg agent typing";
+  div.id = "typing-indicator";
+  div.innerHTML = `
+    <div class="msg-av" style="background:var(--blue);color:#fff">🤖</div>
+    <div class="typing-bubble">
+      <div class="tdot"></div><div class="tdot"></div><div class="tdot"></div>
+    </div>
+  `;
+  msgs.appendChild(div);
+  msgs.scrollTop = msgs.scrollHeight;
+}
+
+function removeTyping(){
+  const el = document.getElementById("typing-indicator");
+  if(el) el.remove();
+}
+
+function loadPrompt(btn){
+  document.getElementById("chat-input").value = btn.textContent;
+  document.getElementById("chat-input").focus();
+}
+
+function showError(msg){
+  const banner = document.getElementById("error-banner");
+  banner.textContent = msg;
+  banner.style.display = "block";
+}
+function hideError(){
+  document.getElementById("error-banner").style.display = "none";
+}
+
+function escapeHtml(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// ─── RCSA Output Generation ──────────────────────────────────────
+async function generateRCSA(){
+  if(!connected){ showError("Connect backend first"); return; }
+  if(conversation.length < 2){
+    alert("Please have at least one exchange in the AI Interview tab first — the output is generated from your conversation.");
+    return;
+  }
+
+  document.getElementById("output-empty").style.display = "none";
+  document.getElementById("output-content").style.display = "none";
+  document.getElementById("output-loading").style.display = "flex";
+
+  try {
+    const res = await fetch(`${API_URL}/rcsa_output`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: conversation, business_unit: "Retail Banking" })
+    });
+    if(!res.ok){
+      const errText = await res.text();
+      throw new Error(`API error ${res.status}: ${errText}`);
+    }
+    const data = await res.json();
+    renderRCSAOutput(data);
+    rcsaGenerated = true;
+    hideError();
+  } catch(err){
+    document.getElementById("output-loading").style.display = "none";
+    document.getElementById("output-empty").style.display = "block";
+    showError(`RCSA generation failed: ${err.message}`);
+  }
+}
+
+function pillClass(label){
+  const m = {
+    "HIGH":"pill-high",
+    "MEDIUM-HIGH":"pill-medhigh",
+    "MEDIUM":"pill-med",
+    "MEDIUM-LOW":"pill-med",
+    "LOW":"pill-low"
+  };
+  return m[label] || "pill-med";
+}
+
+function renderRCSAOutput(d){
+  document.getElementById("output-loading").style.display = "none";
+  document.getElementById("output-content").style.display = "block";
+
+  document.getElementById("output-title").textContent = `Auto-Generated RCSA — ${d.business_unit} Division`;
+  document.getElementById("output-date").textContent = new Date(d.generated_at).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+
+  // Score cards
+  document.getElementById("sc-inherent").textContent = `${d.inherent_risk_score} / 25`;
+  document.getElementById("sc-residual").textContent = `${d.residual_risk_score} / 25`;
+  document.getElementById("sc-actions").textContent = d.priority_action_count;
+  const il = document.getElementById("sc-inherent-label");
+  il.textContent = d.inherent_risk_label;
+  il.className = `sc-pill ${pillClass(d.inherent_risk_label)}`;
+  const rl = document.getElementById("sc-residual-label");
+  rl.textContent = d.residual_risk_label;
+  rl.className = `sc-pill ${pillClass(d.residual_risk_label)}`;
+
+  // Heat map
+  renderHeatMap(d.heat_map_position);
+
+  // Detective controls
+  const dcContainer = document.getElementById("detective-controls");
+  dcContainer.innerHTML = (d.detective_controls || []).map(c => {
+    const rtClass = {
+      "Strong":"rt-strong","Adequate":"rt-adequate",
+      "Weak":"rt-weak","Ineffective":"rt-ineffective"
+    }[c.rating] || "rt-adequate";
+    return `
+      <div class="ctrl-row">
+        <div class="ctrl-info">
+          <div class="ctrl-name">${escapeHtml(c.name || "")}</div>
+          <div class="ctrl-desc">${escapeHtml(c.type || "")} — ${escapeHtml(c.description || "")}</div>
+          ${c.last_tested ? `<div class="ctrl-tested">Last tested: ${escapeHtml(c.last_tested)}${c.notes ? ` — ${escapeHtml(c.notes)}` : ""}</div>` : ""}
+        </div>
+        <span class="ctrl-rating ${rtClass}">${escapeHtml(c.rating || "")}</span>
+      </div>
+    `;
+  }).join("");
+
+  // 3 Lines of defence
+  const tlod = d.three_lines_defence || {};
+  const tlodHtml = [
+    {key:"first_line",cls:"",label:"1st Line — Continuous Control Monitoring"},
+    {key:"second_line",cls:"line2",label:"2nd Line — Monthly RCSA (CSA)"},
+    {key:"third_line",cls:"line3",label:"3rd Line — Internal Audit (Annual)"}
+  ].map(x => {
+    const v = tlod[x.key] || {};
+    return `
+      <div class="tlod-card ${x.cls}">
+        <div class="tlod-card-title">${x.label}</div>
+        <div class="tlod-card-desc">${escapeHtml(v.description || "—")}</div>
+        ${v.last_validated ? `<span class="tlod-validated">Last validated: ${escapeHtml(v.last_validated)}</span>` : ""}
+      </div>
+    `;
+  }).join("");
+  document.getElementById("tlod-grid").innerHTML = tlodHtml;
+
+  // Priority actions
+  const paContainer = document.getElementById("priority-actions");
+  paContainer.innerHTML = (d.priority_actions || []).map((a, i) => {
+    const pClass = a.priority === "P1" ? "" : a.priority === "P2" ? "p2" : "p3";
+    return `
+      <div class="action-item">
+        <div class="action-num">${i+1}</div>
+        <div class="action-body">
+          <div class="action-text">${escapeHtml(a.action || "")}</div>
+          <div class="action-meta">
+            <span>Owner: <strong>${escapeHtml(a.owner || "—")}</strong></span>
+            <span class="action-priority ${pClass}">${escapeHtml(a.priority || "P1")} — ${a.due_days || "—"} days</span>
+            ${a.regulatory_ref ? `<span class="action-ref">Ref: ${escapeHtml(a.regulatory_ref)}</span>` : ""}
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  // Rationale + evidence
+  document.getElementById("rationale-text").textContent = d.ai_rationale || "—";
+  document.getElementById("evidence-list").innerHTML = (d.evidence_trace || [])
+    .map(e => `<li>${escapeHtml(e)}</li>`).join("");
+}
+
+function renderHeatMap(pos){
+  const impact = (pos && pos.impact) || 4;
+  const likelihood = (pos && pos.likelihood) || 4;
+  // 5x5 matrix: scores = impact * likelihood
+  // Row 1 = impact 5 (top), Row 5 = impact 1 (bottom)
+  // Col 1 = likelihood 1 (left), Col 5 = likelihood 5 (right)
+  let html = "";
+  for(let imp = 5; imp >= 1; imp--){
+    if(imp === 5){
+      html += `<div class="hm-axis-y">IMPACT →</div>`;
+    } else if(imp === 4){
+      // empty cell to keep grid alignment (vertical-rl spans whole left column)
+    }
+    // 5 cells in this row
+    for(let lik = 1; lik <= 5; lik++){
+      const score = imp * lik;
+      let cls = "hm-low";
+      if(score >= 16) cls = "hm-vhigh";
+      else if(score >= 9) cls = "hm-high";
+      else if(score >= 5) cls = "hm-med";
+      const isHere = (imp === impact && lik === likelihood);
+      html += `<div class="hm-cell ${cls}">${score}${isHere ? '<div class="hm-pos"></div>' : ''}</div>`;
+    }
+  }
+  html += `<div class="hm-axis-x">LIKELIHOOD →</div>`;
+  document.getElementById("heatmap").innerHTML = html;
+}
+
+function exportRCSA(){
+  if(!rcsaGenerated){ alert("Generate the RCSA output first."); return; }
+  alert("Demo: would export to MetricStream / ServiceNow / Archer GRC platform.\n\nIn enterprise deployment, this becomes a Power Automate workflow that writes the structured output to the bank's GRC tool.");
+}
+
+// ─── Dashboard ───────────────────────────────────────────────────
+async function generateDashboard(){
+  if(!connected){ showError("Connect backend first"); return; }
+
+  document.getElementById("dash-loading").style.display = "flex";
+  document.getElementById("dash-content").style.display = "none";
+
+  try {
+    const res = await fetch(`${API_URL}/dashboard`);
+    if(!res.ok){
+      const errText = await res.text();
+      throw new Error(`API error ${res.status}: ${errText}`);
+    }
+    const data = await res.json();
+    renderDashboard(data);
+    dashGenerated = true;
+    hideError();
+  } catch(err){
+    document.getElementById("dash-loading").style.display = "none";
+    showError(`Dashboard generation failed: ${err.message}`);
+  }
+}
+
+function renderDashboard(d){
+  document.getElementById("dash-loading").style.display = "none";
+  document.getElementById("dash-content").style.display = "block";
+
+  document.getElementById("ds-bus").textContent = d.business_units_in_scope;
+  document.getElementById("ds-high").textContent = d.high_risk_bus;
+  document.getElementById("ds-actions").textContent = d.open_action_items;
+  document.getElementById("ds-effective").textContent = `${d.controls_rated_effective_pct}%`;
+
+  // BU grid
+  document.getElementById("bu-grid").innerHTML = (d.business_units || []).map(bu => {
+    const cls = {
+      "HIGH":"bu-high","MEDIUM":"bu-medium","LOW":"bu-low","IN PROG":"bu-prog"
+    }[bu.rating] || "bu-medium";
+    return `
+      <div class="bu-card ${cls}">
+        <div class="bu-card-name">${escapeHtml(bu.name)}</div>
+        <div class="bu-card-rating">${escapeHtml(bu.rating)}</div>
+      </div>
+    `;
+  }).join("");
+
+  // Top risk categories
+  const cats = d.top_risk_categories || [];
+  const maxVal = Math.max(...cats.map(c => c.exposure_index || 0), 100);
+  document.getElementById("risk-categories").innerHTML = cats.map((c, i) => {
+    const pct = ((c.exposure_index || 0) / maxVal * 100).toFixed(0);
+    return `
+      <div class="risk-row">
+        <span class="nm">${escapeHtml(c.name)}</span>
+        <span class="val">${c.exposure_index}</span>
+      </div>
+      <div class="risk-bar"><div class="risk-bar-fill risk-fill-${i+1}" style="width:${pct}%"></div></div>
+    `;
+  }).join("");
+
+  // Cycle time
+  const ct = d.cycle_time_comparison || {};
+  const maxDays = Math.max(ct.manual_days || 87, ct.ai_pilot_days || 31, ct.ai_current_days || 24);
+  document.getElementById("cycle-time").innerHTML = `
+    <div class="cycle-row">
+      <div class="lbl"><span>Manual process (pre-AI)</span><span class="days red">${ct.manual_days || 87} days</span></div>
+      <div class="cycle-bar"><div class="cycle-bar-fill cycle-fill-red" style="width:${(ct.manual_days||87)/maxDays*100}%"></div></div>
+    </div>
+    <div class="cycle-row">
+      <div class="lbl"><span>AI-assisted — pilot BU</span><span class="days orange">${ct.ai_pilot_days || 31} days</span></div>
+      <div class="cycle-bar"><div class="cycle-bar-fill cycle-fill-orange" style="width:${(ct.ai_pilot_days||31)/maxDays*100}%"></div></div>
+    </div>
+    <div class="cycle-row">
+      <div class="lbl"><span>AI-assisted — current</span><span class="days green">${ct.ai_current_days || 24} days</span></div>
+      <div class="cycle-bar"><div class="cycle-bar-fill cycle-fill-green" style="width:${(ct.ai_current_days||24)/maxDays*100}%"></div></div>
+    </div>
+    <div class="reduction-banner">↓ ${ct.reduction_pct || 72}% reduction in cycle time with AI automation</div>
+  `;
+}
+</script>
+</body>
+</html>

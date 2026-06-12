@@ -30,7 +30,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 if not OPENAI_API_KEY:
     raise ValueError("OPENAI_API_KEY environment variable not set")
 
-DOCS_PATH = Path(__file__).parent / "control_docs"
+DOCS_PATH = Path(__file__).parent.parent / "control_docs"
 CHROMA_PATH = Path(__file__).parent / "chroma_data"
 COLLECTION_NAME = "rcsa_controls"
 CHAT_MODEL = "gpt-4o"
