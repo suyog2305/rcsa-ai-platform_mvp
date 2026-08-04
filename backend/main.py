@@ -44,14 +44,21 @@ TOP_K_RETRIEVAL = 4
 ENABLE_CONTROL_RECO = os.getenv("ENABLE_CONTROL_RECO", "false").strip().lower() in ("1", "true", "yes", "on")
 CONTROL_GAP_TOP_K = 10
 
-# Voice input via Azure Speech. Needs the flag AND a key/region — an enabled flag with
-# no resource behind it would show the control owner a mic button that cannot work, so
-# both are required before the frontend is told the feature exists.
+# Voice input has two tiers, matching the MVP-vs-enterprise split the architecture
+# already draws:
+#   azure   — the client's own Azure Speech resource, audio stays in their tenant.
+#             Selected automatically whenever a key and region are configured.
+#   browser — the browser's built-in speech API. No infrastructure, no cost, and
+#             consistent with the MVP's public-services posture. Audio IS sent to
+#             the browser vendor's speech service, so the UI must say so rather
+#             than imply in-tenant processing.
 ENABLE_VOICE = os.getenv("ENABLE_VOICE", "false").strip().lower() in ("1", "true", "yes", "on")
 AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "").strip()
 AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "").strip()
 AZURE_SPEECH_LANGUAGE = os.getenv("AZURE_SPEECH_LANGUAGE", "en-GB").strip()
-VOICE_AVAILABLE = ENABLE_VOICE and bool(AZURE_SPEECH_KEY and AZURE_SPEECH_REGION)
+AZURE_SPEECH_CONFIGURED = bool(AZURE_SPEECH_KEY and AZURE_SPEECH_REGION)
+VOICE_ENGINE = ("azure" if AZURE_SPEECH_CONFIGURED else "browser") if ENABLE_VOICE else "none"
+VOICE_AVAILABLE = VOICE_ENGINE != "none"
 # Azure issues a 10-minute token; expire ours earlier so the browser refreshes in time.
 SPEECH_TOKEN_TTL_SECONDS = 540
 
@@ -300,6 +307,8 @@ async def root():
         "features": {
             "control_recommendations": ENABLE_CONTROL_RECO,
             "voice_input": VOICE_AVAILABLE,
+            "voice_engine": VOICE_ENGINE,
+            "voice_language": AZURE_SPEECH_LANGUAGE,
         },
     }
 
@@ -859,8 +868,8 @@ async def speech_token():
     endpoint in the configured region — so audio goes to the tenant's own Speech
     resource rather than to a third-party dictation service.
     """
-    if not VOICE_AVAILABLE:
-        raise HTTPException(404, "Voice input is not enabled on this deployment")
+    if VOICE_ENGINE != "azure":
+        raise HTTPException(404, "Azure Speech is not configured on this deployment")
 
     url = f"https://{AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
     try:
