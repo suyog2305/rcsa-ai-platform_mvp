@@ -1297,6 +1297,7 @@ function renderGaps(d){
       ${r.owner_statement ? `<div class="gap-quote">“${gapText(r.owner_statement)}”</div>` : ""}
       <div class="gap-meta">
         <strong>Why it is unmitigated:</strong> ${gapText(r.why_unmitigated)}
+        ${r.inventory_scan ? `<br><strong>Controls considered:</strong> ${gapText(r.inventory_scan)}` : ""}
         ${r.regulatory_ref ? `<br><strong>Regulatory reference:</strong> ${gapText(r.regulatory_ref)}` : ""}
       </div>
       <div class="gap-sub">Recommended controls</div>
@@ -1304,16 +1305,17 @@ function renderGaps(d){
         <div class="reco">
           <div class="reco-head">
             <span class="reco-name">${gapText(c.name)}</span>
-            <span class="src-tag ${c.source === "EXISTING" ? "src-existing" : "src-new"}">${
-              c.source === "EXISTING" ? `EXISTING · ${gapText(c.control_id)}` : "NEW CONTROL"
+            <span class="src-tag ${c.action === "EXTEND" ? "src-existing" : "src-new"}">${
+              c.action === "EXTEND" ? `EXTEND · ${gapText(c.control_id)}` : "ADD NEW CONTROL"
             }</span>
             ${c.control_type ? `<span class="src-tag src-type">${gapText(c.control_type)}</span>` : ""}
           </div>
           <div class="reco-body">
             <strong>Objective:</strong> ${gapText(c.objective)}<br>
-            <strong>Design:</strong> ${gapText(c.design)}<br>
+            ${c.current_coverage ? `<strong>Covers today:</strong> ${gapText(c.current_coverage)}<br>` : ""}
+            ${c.coverage_gap ? `<strong>Does not reach:</strong> ${gapText(c.coverage_gap)}<br>` : ""}
+            <strong>${c.action === "EXTEND" ? "Change required" : "Design"}:</strong> ${gapText(c.design)}<br>
             <strong>Frequency:</strong> ${gapText(c.frequency)} · <strong>Owner:</strong> ${gapText(c.owner)}
-            ${c.coverage_gap ? `<br><strong>Why the risk survives it:</strong> ${gapText(c.coverage_gap)}` : ""}
           </div>
         </div>
       `).join("")}
@@ -1328,7 +1330,7 @@ function renderGaps(d){
     <div class="gap-card sev-medium">
       <div class="gap-head">
         <div>
-          <div class="gap-id">${gapText(c.control_id)}${c.linked_risk_id ? ` · fails ${gapText(c.linked_risk_id)}` : ""}</div>
+          <div class="gap-id">${c.control_id && c.control_id !== c.control_name ? gapText(c.control_id) : "UNCATALOGUED CONTROL"}${c.linked_risk_id ? ` · fails ${gapText(c.linked_risk_id)}` : ""}</div>
           <div class="gap-stmt">${gapText(c.control_name)}</div>
         </div>
         <span class="ctrl-rating rt-weak">${gapText(c.current_rating)}</span>

@@ -590,15 +590,27 @@ async def dashboard():
 CONTROL_GAP_PROMPT = """You are a second-line risk reviewer analysing an RCSA interview transcript. Your job has two halves.
 
 HALF 1 — UNMITIGATED RISKS
-Identify every risk the control owner raised that is NOT adequately mitigated by an existing control. A risk counts as unmitigated when the owner describes an exposure and either (a) names no control at all, (b) names a control they admit is manual, inconsistent, untested or breached, or (c) describes a workaround rather than a designed control. Only use risks actually voiced in the conversation — never invent one.
+Identify every risk the control owner raised that the current control set does not adequately contain. A risk qualifies when the owner describes an exposure and either (a) names no control at all, (b) names a control they admit is manual, inconsistent, untested or breached, or (c) describes a workaround rather than a designed control. Only use risks actually voiced in the conversation — never invent one.
 
-For each, recommend the controls that would mitigate it. GROUNDING RULE, applied strictly:
-- First search the AVAILABLE CONTROL INVENTORY and RETRIEVED CONTEXT for a control that already addresses the risk. If one exists, set "source" to "EXISTING", put its real ID in "control_id", and use "coverage_gap" to explain why the risk survives despite it (scope, frequency, threshold, manual execution, coverage of only part of the population, etc.).
-- Only when no existing control addresses the risk, set "source" to "NEW", set "control_id" to null, and design one.
-- NEVER put an ID in "control_id" unless it appears verbatim in the AVAILABLE CONTROL INVENTORY.
+"Unmitigated" does NOT mean "no control exists". The usual case by far is that a relevant control DOES exist and simply does not reach this exposure — wrong trigger population, too infrequent, too high a threshold, executed manually, covering only part of the population. Such a risk is still unmitigated, and the existing control is still the right starting point for fixing it. Treat "nothing in the library relates to this at all" as the rare exception it is.
+
+Before deciding, you MUST scan the AVAILABLE CONTROL INVENTORY for this specific risk and record that scan in "inventory_scan". Name the two or three closest controls by ID and say for each whether it bears on the risk. Any control your scan finds to bear on the risk — even partially — MUST then appear in "recommended_controls" as an EXTEND. Only write that nothing relates after you have actually looked and can name what you rejected.
+
+For each risk, state what the risk team should DO about it. Every recommendation is one of exactly two actions:
+
+  EXTEND — an existing control in the inventory already bears on this risk but does not reach far enough. Widening it is the recommendation. Put its real ID in "control_id" and its real inventory name in "name", say what it already does for this risk in "current_coverage", and say precisely what it fails to reach in "coverage_gap" (trigger population, scope, frequency, threshold, manual execution).
+  ADD — nothing in the inventory bears on this risk, so a new control has to be built. Set "control_id" to null and leave "current_coverage" and "coverage_gap" as empty strings.
+
+Work the AVAILABLE CONTROL INVENTORY before choosing. It lists every control's ID and what that control actually does — match on what a control does, never on its ID. EXTEND is the more common and more valuable answer: a control that bears on the risk only PARTIALLY is still the right thing to extend, and proposing a brand-new control that duplicates one already in the inventory is a failure of this task. Reach for ADD only when you have been through the inventory and nothing relates.
+
+- NEVER put an ID in "control_id" unless it appears verbatim in the inventory, and never attach a name from the conversation to an inventory ID — a real ID under a wrong name is worse than no citation at all. The same applies to "control_name" in HALF 2.
+- "why_unmitigated" may say that no control exists ONLY when every recommendation for that risk is an ADD.
+- A risk may carry both: EXTEND the existing control AND ADD a new one alongside it.
 
 HALF 2 — INADEQUATE CONTROLS
 For every existing control the conversation shows to be unfit for the risk it is meant to mitigate, give the risk team both (a) how to test it and (b) what to change so it becomes adequate.
+
+HALF 2 is independent of HALF 1 and is never optional. A control that you already cited in HALF 1 as EXISTING belongs here as well when the conversation shows it failing — listing it twice is correct and expected, because the two halves answer different questions. Never drop a control from HALF 2 to avoid repeating yourself. If the owner describes a control as manual, late, self-approved, unreviewed or breached, it belongs here even when it appears nowhere in the inventory (use the owner's own name for it as "control_id" and "control_name" in that case).
 
 Return a JSON object with this EXACT structure — no markdown, no commentary:
 
@@ -610,19 +622,21 @@ Return a JSON object with this EXACT structure — no markdown, no commentary:
       "risk_category": "<e.g. Fraud, AML, Process Execution, Third Party, Technology>",
       "severity": "<HIGH|MEDIUM|LOW>",
       "owner_statement": "<short quote or close paraphrase of what the control owner actually said>",
-      "why_unmitigated": "<why no current control covers this>",
+      "inventory_scan": "<the 2-3 closest inventory controls by ID, and for each whether it bears on this risk — e.g. 'RB-CTRL-02 covers synthetic identity but only post-decision on approved loans; RB-CTRL-04 covers KYC at onboarding, not origination screening'>",
+      "why_unmitigated": "<why the current control set does not contain this risk — reference the controls named in inventory_scan rather than claiming nothing exists>",
       "regulatory_ref": "<citation if the conversation or context supports one, else empty string>",
       "recommended_controls": [
         {
-          "source": "<EXISTING|NEW>",
-          "control_id": "<real ID from the inventory, or null when source is NEW>",
-          "name": "<control name>",
+          "action": "<EXTEND|ADD>",
+          "control_id": "<real ID from the inventory when EXTEND, null when ADD>",
+          "name": "<the control's real inventory name when EXTEND, the proposed name when ADD>",
           "control_type": "<Preventive|Detective|Corrective>",
-          "objective": "<what the control is designed to prevent or detect>",
-          "design": "<how it operates, 1-2 sentences>",
+          "objective": "<what the control should prevent or detect for this risk>",
+          "design": "<for EXTEND: the change that widens it to cover this risk. For ADD: how the new control operates. 1-2 sentences>",
           "frequency": "<Continuous|Daily|Weekly|Monthly|Quarterly>",
           "owner": "<role that should own it>",
-          "coverage_gap": "<for EXISTING: why the risk persists despite this control. For NEW: empty string>"
+          "current_coverage": "<EXTEND only: what this control already does for this risk. ADD: empty string>",
+          "coverage_gap": "<EXTEND only: what it fails to reach today. ADD: empty string>"
         }
       ]
     }
@@ -664,20 +678,31 @@ Return ONLY valid JSON. No markdown fences. No commentary."""
 
 
 def control_inventory() -> str:
-    """Distinct control IDs in the vector store — the whitelist recommendations may cite."""
+    """One line per control: the ID plus what that control actually does.
+
+    The description is what makes this usable. A bare list of IDs is a hallucination
+    guard but not a matching aid — the model cannot map a risk onto an ID it has no
+    description for, so it designs a new control instead of citing the real one, and
+    any ID it does reach for gets an arbitrary name attached.
+    """
     if not collection:
         return ""
     try:
-        items = collection.get(include=["metadatas"])
+        items = collection.get(
+            where={"$and": [{"doc_type": "Control Narrative"}, {"chunk_index": 0}]},
+            include=["documents", "metadatas"],
+        )
     except Exception as e:
         log.error(f"Control inventory lookup failed: {e}")
         return ""
-    seen = {}
-    for meta in items["metadatas"]:
+
+    lines = {}
+    for doc, meta in zip(items["documents"], items["metadatas"]):
         control_id = meta.get("control_id")
-        if control_id and control_id not in seen:
-            seen[control_id] = meta.get("doc_type", "")
-    return "\n".join(f"- {cid} ({doc_type})" for cid, doc_type in sorted(seen.items()))
+        if control_id and control_id not in lines:
+            summary = " ".join(doc.split())[:220]
+            lines[control_id] = f"- {control_id}: {summary}"
+    return "\n".join(lines[cid] for cid in sorted(lines))
 
 
 @app.post("/control_recommendations", response_model=ControlGapResponse)
