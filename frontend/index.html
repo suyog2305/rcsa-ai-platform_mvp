@@ -359,6 +359,36 @@
     text-align:center;font-size:12px;font-weight:600;margin-top:10px;border:1px solid #86EFAC}
 
   /* Loading spinner */
+  /* ── Control Gaps view ──────────────────────────────────────────── */
+  .gap-card{background:#fff;border:1px solid var(--border);border-left:3px solid var(--red);
+    border-radius:10px;padding:14px 16px;margin-bottom:14px}
+  .gap-card.sev-medium{border-left-color:var(--gold)}
+  .gap-card.sev-low{border-left-color:var(--green)}
+  .gap-card:last-child{margin-bottom:0}
+  .gap-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:6px}
+  .gap-id{font-size:10px;font-weight:700;color:var(--gray);letter-spacing:.5px}
+  .gap-stmt{font-size:13px;font-weight:600;color:var(--ink);line-height:1.5;margin-top:3px}
+  .gap-meta{font-size:11px;color:var(--gray);line-height:1.7}
+  .gap-meta strong{color:var(--dark)}
+  .gap-quote{font-size:11px;font-style:italic;color:var(--ink-2);background:var(--gray-lt);
+    border-radius:6px;padding:8px 10px;margin:8px 0;line-height:1.6}
+  .gap-sub{font-size:10px;font-weight:700;color:var(--ink);text-transform:uppercase;
+    letter-spacing:.6px;margin:13px 0 6px}
+  .gap-list{margin:4px 0 0 16px;font-size:11px;color:var(--gray);line-height:1.75}
+  .reco{border:1px solid var(--gray-md);border-radius:8px;padding:10px 12px;margin-top:8px;background:var(--bg)}
+  .reco-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:5px}
+  .reco-name{font-size:12px;font-weight:700;color:var(--ink)}
+  .src-tag{padding:2px 8px;border-radius:6px;font-size:9px;font-weight:700;letter-spacing:.4px}
+  .src-existing{background:var(--blue-lt);color:var(--blue)}
+  .src-new{background:var(--purple-lt);color:var(--purple)}
+  .src-type{background:var(--teal-lt);color:var(--teal)}
+  .reco-body{font-size:11px;color:var(--gray);line-height:1.65}
+  .reco-body strong{color:var(--dark)}
+  .test-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:8px}
+  .test-cell{background:var(--gray-lt);border-radius:6px;padding:8px 10px}
+  .test-cell-lbl{font-size:9px;font-weight:700;color:var(--gray);text-transform:uppercase;letter-spacing:.4px}
+  .test-cell-val{font-size:11px;color:var(--dark);line-height:1.5;margin-top:3px}
+
   .loading{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px;color:var(--gray)}
   .loader{width:32px;height:32px;border:3px solid var(--gray-lt);border-top-color:var(--blue);border-radius:50%;
     animation:spin 1s linear infinite;margin-bottom:14px}
@@ -413,6 +443,9 @@
     </button>
     <button class="tab" data-view="dashboard" onclick="switchView('dashboard')">
       📊 Risk Dashboard
+    </button>
+    <button class="tab" data-view="gaps" onclick="switchView('gaps')" id="tab-gaps" style="display:none">
+      🧩 Control Gaps
     </button>
   </div>
 
@@ -661,6 +694,82 @@
     </div>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════════════════════
+       VIEW 4: CONTROL GAPS (unmitigated risks → recommended controls)
+       ═══════════════════════════════════════════════════════════════════ -->
+  <div class="view" id="view-gaps">
+    <div class="output-panel">
+
+      <!-- Header -->
+      <div class="output-head">
+        <div class="output-title-block">
+          <div class="output-title">Control Gap Analysis — Unmitigated Risk Coverage</div>
+          <div class="output-meta">
+            <span>AI-drafted · Grounded in the indexed control library · </span>
+            <span id="gaps-date">—</span>
+          </div>
+        </div>
+        <div class="output-actions">
+          <button class="btn" onclick="generateGaps()" id="gen-gaps-btn">🔄 Re-analyse from interview</button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div class="empty-state" id="gaps-empty">
+        <div class="emoji">🧩</div>
+        <h3>No gap analysis yet</h3>
+        <p>Once the control owner has described their risks in the Interview tab, this reads the transcript for risks that no control adequately mitigates — then recommends the control for each, plus the test and remediation steps for controls that are unfit.</p>
+        <button class="btn" onclick="generateGaps()">⚡ Analyse control gaps</button>
+      </div>
+
+      <!-- Loading state -->
+      <div class="loading" id="gaps-loading" style="display:none">
+        <div class="loader"></div>
+        <div style="font-size:13px;color:var(--gray)">Mapping voiced risks against the control library...</div>
+        <div style="font-size:11px;color:var(--gray);margin-top:4px">GPT-4o is checking which risks survive the existing controls</div>
+      </div>
+
+      <!-- Actual content (hidden until generated) -->
+      <div id="gaps-content" style="display:none">
+        <div class="scorecards">
+          <div class="scorecard">
+            <div class="sc-val red" id="gs-risks">—</div>
+            <div class="sc-lbl">Unmitigated Risks</div>
+          </div>
+          <div class="scorecard">
+            <div class="sc-val orange" id="gs-controls">—</div>
+            <div class="sc-lbl">Inadequate Controls</div>
+          </div>
+          <div class="scorecard">
+            <div class="sc-val blue" id="gs-recos">—</div>
+            <div class="sc-lbl">Controls Recommended</div>
+          </div>
+        </div>
+
+        <div class="ho-section" style="margin-bottom:14px">
+          <div class="ho-section-title">⚠️ Unmitigated Risks & Recommended Controls</div>
+          <div id="gap-risks"></div>
+        </div>
+
+        <div class="ho-section" style="margin-bottom:14px">
+          <div class="ho-section-title">🧪 Inadequate Controls — Testing & Remediation</div>
+          <div id="gap-controls"></div>
+        </div>
+
+        <div class="ho-section" style="margin-bottom:14px">
+          <div class="ho-section-title">🧠 Coverage Summary</div>
+          <div class="gap-meta" id="gap-summary">—</div>
+        </div>
+
+        <div class="ho-section">
+          <div class="ho-section-title">🔍 Evidence Trace</div>
+          <ul class="gap-list" id="gap-evidence"></ul>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -671,6 +780,7 @@ let kbDocs = [];
 let currentView = "interview";
 let rcsaGenerated = false;
 let dashGenerated = false;
+let gapsGenerated = false;
 
 // ─── Connection ──────────────────────────────────────────────────
 async function connect(){
@@ -690,6 +800,12 @@ async function connect(){
     document.getElementById("chat-status").textContent = "Live · Ready";
     document.getElementById("kb").classList.add("show");
     document.getElementById("tabs").classList.add("show");
+
+    // Control Gaps is flag-gated on the backend — only offer the tab if it's on
+    const gapsOn = !!(health.features && health.features.control_recommendations);
+    document.getElementById("tab-gaps").style.display = gapsOn ? "" : "none";
+    gapsGenerated = false;
+
     document.getElementById("kb-count").textContent = `${kb.total_documents} docs · ${kb.total_chunks} chunks`;
     document.getElementById("info-backend").textContent = "Connected";
     document.getElementById("info-docs").textContent = kb.total_documents;
@@ -1100,6 +1216,157 @@ function renderDashboard(d){
     </div>
     <div class="reduction-banner">↓ ${ct.reduction_pct || 72}% reduction in cycle time with AI automation</div>
   `;
+}
+
+// ─── Control Gap Analysis ────────────────────────────────────────
+// The gaps payload is LLM-shaped, so coerce before escaping — a numeric
+// sample_size or a null field must not break the render.
+function gapText(v){
+  return (v === null || v === undefined || v === "") ? "—" : escapeHtml(String(v));
+}
+
+function sevCard(sev){
+  const s = String(sev || "").toUpperCase();
+  return s === "MEDIUM" ? "sev-medium" : s === "LOW" ? "sev-low" : "";
+}
+
+function sevPill(sev){
+  const s = String(sev || "").toUpperCase();
+  return s === "MEDIUM" ? "rt-weak" : s === "LOW" ? "rt-adequate" : "rt-ineffective";
+}
+
+async function generateGaps(){
+  if(!connected){ showError("Connect backend first"); return; }
+  if(conversation.length < 2){
+    alert("Please have at least one exchange in the AI Interview tab first — control gaps are derived from what the control owner actually says.");
+    return;
+  }
+
+  document.getElementById("gaps-empty").style.display = "none";
+  document.getElementById("gaps-content").style.display = "none";
+  document.getElementById("gaps-loading").style.display = "flex";
+
+  try {
+    const res = await fetch(`${API_URL}/control_recommendations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages: conversation, business_unit: "Retail Banking" })
+    });
+    if(res.status === 404){
+      throw new Error("this backend does not have control recommendations enabled. Set ENABLE_CONTROL_RECO=true on the backend service and redeploy.");
+    }
+    if(!res.ok){
+      const errText = await res.text();
+      throw new Error(`API error ${res.status}: ${errText}`);
+    }
+    const data = await res.json();
+    renderGaps(data);
+    gapsGenerated = true;
+    hideError();
+  } catch(err){
+    document.getElementById("gaps-loading").style.display = "none";
+    document.getElementById("gaps-empty").style.display = "block";
+    showError(`Control gap analysis failed: ${err.message}`);
+  }
+}
+
+function renderGaps(d){
+  document.getElementById("gaps-loading").style.display = "none";
+  document.getElementById("gaps-content").style.display = "block";
+
+  document.getElementById("gaps-date").textContent =
+    new Date(d.generated_at).toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+
+  const risks = d.unmitigated_risks || [];
+  const weak = d.inadequate_controls || [];
+  document.getElementById("gs-risks").textContent = d.unmitigated_risk_count;
+  document.getElementById("gs-controls").textContent = d.inadequate_control_count;
+  document.getElementById("gs-recos").textContent =
+    risks.reduce((n, r) => n + (r.recommended_controls || []).length, 0);
+
+  // ── Unmitigated risks → recommended controls ──
+  document.getElementById("gap-risks").innerHTML = risks.length ? risks.map(r => `
+    <div class="gap-card ${sevCard(r.severity)}">
+      <div class="gap-head">
+        <div>
+          <div class="gap-id">${gapText(r.risk_id)} · ${gapText(r.risk_category)}</div>
+          <div class="gap-stmt">${gapText(r.risk_statement)}</div>
+        </div>
+        <span class="ctrl-rating ${sevPill(r.severity)}">${gapText(r.severity)}</span>
+      </div>
+      ${r.owner_statement ? `<div class="gap-quote">“${gapText(r.owner_statement)}”</div>` : ""}
+      <div class="gap-meta">
+        <strong>Why it is unmitigated:</strong> ${gapText(r.why_unmitigated)}
+        ${r.inventory_scan ? `<br><strong>Controls considered:</strong> ${gapText(r.inventory_scan)}` : ""}
+        ${r.regulatory_ref ? `<br><strong>Regulatory reference:</strong> ${gapText(r.regulatory_ref)}` : ""}
+      </div>
+      <div class="gap-sub">Recommended controls</div>
+      ${(r.recommended_controls || []).map(c => `
+        <div class="reco">
+          <div class="reco-head">
+            <span class="reco-name">${gapText(c.name)}</span>
+            <span class="src-tag ${c.action === "EXTEND" ? "src-existing" : "src-new"}">${
+              c.action === "EXTEND" ? `EXTEND · ${gapText(c.control_id)}` : "ADD NEW CONTROL"
+            }</span>
+            ${c.control_type ? `<span class="src-tag src-type">${gapText(c.control_type)}</span>` : ""}
+          </div>
+          <div class="reco-body">
+            <strong>Objective:</strong> ${gapText(c.objective)}<br>
+            ${c.current_coverage ? `<strong>Covers today:</strong> ${gapText(c.current_coverage)}<br>` : ""}
+            ${c.coverage_gap ? `<strong>Does not reach:</strong> ${gapText(c.coverage_gap)}<br>` : ""}
+            <strong>${c.action === "EXTEND" ? "Change required" : "Design"}:</strong> ${gapText(c.design)}<br>
+            <strong>Frequency:</strong> ${gapText(c.frequency)} · <strong>Owner:</strong> ${gapText(c.owner)}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `).join("") : `<div class="gap-meta">No unmitigated risk was identified in this conversation.</div>`;
+
+  // ── Inadequate controls → test procedure + remediation ──
+  document.getElementById("gap-controls").innerHTML = weak.length ? weak.map(c => {
+    const t = c.test_procedure || {};
+    const rem = c.remediation || {};
+    return `
+    <div class="gap-card sev-medium">
+      <div class="gap-head">
+        <div>
+          <div class="gap-id">${c.control_id && c.control_id !== c.control_name ? gapText(c.control_id) : "UNCATALOGUED CONTROL"}${c.linked_risk_id ? ` · fails ${gapText(c.linked_risk_id)}` : ""}</div>
+          <div class="gap-stmt">${gapText(c.control_name)}</div>
+        </div>
+        <span class="ctrl-rating rt-weak">${gapText(c.current_rating)}</span>
+      </div>
+      <div class="gap-meta"><strong>Deficiency:</strong> ${gapText(c.why_inadequate)}</div>
+
+      <div class="gap-sub">Measures to take while testing</div>
+      <div class="gap-meta" style="margin-bottom:8px"><strong>Test objective:</strong> ${gapText(t.objective)}</div>
+      <div class="test-grid">
+        <div class="test-cell"><div class="test-cell-lbl">Population</div><div class="test-cell-val">${gapText(t.population)}</div></div>
+        <div class="test-cell"><div class="test-cell-lbl">Sample size</div><div class="test-cell-val">${gapText(t.sample_size)}</div></div>
+        <div class="test-cell"><div class="test-cell-lbl">Sampling basis</div><div class="test-cell-val">${gapText(t.sampling_basis)}</div></div>
+      </div>
+      <div class="gap-meta"><strong>Test attributes</strong></div>
+      <ul class="gap-list">${(t.test_attributes || []).map(a => `<li>${gapText(a)}</li>`).join("")}</ul>
+      <div class="gap-meta" style="margin-top:8px"><strong>Evidence to request from the owner</strong></div>
+      <ul class="gap-list">${(t.evidence_required || []).map(a => `<li>${gapText(a)}</li>`).join("")}</ul>
+      <div class="test-grid" style="margin-top:10px">
+        <div class="test-cell"><div class="test-cell-lbl">Pass criteria</div><div class="test-cell-val">${gapText(t.pass_criteria)}</div></div>
+        <div class="test-cell"><div class="test-cell-lbl">Fail criteria</div><div class="test-cell-val">${gapText(t.fail_criteria)}</div></div>
+      </div>
+
+      <div class="gap-sub">Remediation — making the control adequate</div>
+      <div class="gap-meta"><strong>Gap to close:</strong> ${gapText(rem.current_deficiency)}</div>
+      <ul class="gap-list">${(rem.design_changes || []).map(a => `<li>${gapText(a)}</li>`).join("")}</ul>
+      <div class="test-grid" style="margin-top:10px">
+        <div class="test-cell"><div class="test-cell-lbl">Target rating</div><div class="test-cell-val">${gapText(rem.target_rating)}</div></div>
+        <div class="test-cell"><div class="test-cell-lbl">Residual risk after</div><div class="test-cell-val">${gapText(rem.residual_risk_after)}</div></div>
+        <div class="test-cell"><div class="test-cell-lbl">Owner · due</div><div class="test-cell-val">${gapText(rem.owner)} · ${gapText(rem.due_days)} days</div></div>
+      </div>
+    </div>`;
+  }).join("") : `<div class="gap-meta">No existing control was shown to be inadequate in this conversation.</div>`;
+
+  document.getElementById("gap-summary").textContent = d.coverage_summary || "—";
+  document.getElementById("gap-evidence").innerHTML =
+    (d.evidence_trace || []).map(e => `<li>${gapText(e)}</li>`).join("");
 }
 </script>
 </body>

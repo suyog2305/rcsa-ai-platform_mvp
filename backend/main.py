@@ -39,6 +39,11 @@ CHUNK_SIZE = 800
 CHUNK_OVERLAP = 120
 TOP_K_RETRIEVAL = 4
 
+# Control-gap recommendations ship dark. Set ENABLE_CONTROL_RECO=true in the
+# deployment's environment variables to expose /control_recommendations.
+ENABLE_CONTROL_RECO = os.getenv("ENABLE_CONTROL_RECO", "false").strip().lower() in ("1", "true", "yes", "on")
+CONTROL_GAP_TOP_K = 10
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s · %(levelname)s · %(message)s")
 log = logging.getLogger("rcsa")
 
@@ -226,6 +231,22 @@ class RCSAOutputResponse(BaseModel):
     generated_at: str
 
 
+class ControlGapRequest(BaseModel):
+    messages: List[ChatMessage]
+    business_unit: Optional[str] = "Retail Banking"
+
+
+class ControlGapResponse(BaseModel):
+    business_unit: str
+    unmitigated_risk_count: int
+    inadequate_control_count: int
+    unmitigated_risks: List[dict]
+    inadequate_controls: List[dict]
+    coverage_summary: str
+    evidence_trace: List[str]
+    generated_at: str
+
+
 class DashboardResponse(BaseModel):
     business_units_in_scope: int
     high_risk_bus: int
@@ -265,6 +286,7 @@ async def root():
         "status": "operational",
         "model": CHAT_MODEL,
         "documents_indexed": collection.count() if collection else 0,
+        "features": {"control_recommendations": ENABLE_CONTROL_RECO},
     }
 
 
@@ -560,6 +582,193 @@ async def dashboard():
         business_units=data.get("business_units", []),
         top_risk_categories=data.get("top_risk_categories", []),
         cycle_time_comparison=data.get("cycle_time_comparison", {}),
+        generated_at=datetime.utcnow().isoformat(),
+    )
+
+
+# ── CONTROL GAP RECOMMENDATIONS ──────────────────────────────────────────
+CONTROL_GAP_PROMPT = """You are a second-line risk reviewer analysing an RCSA interview transcript. Your job has two halves.
+
+HALF 1 — UNMITIGATED RISKS
+Identify every risk the control owner raised that the current control set does not adequately contain. A risk qualifies when the owner describes an exposure and either (a) names no control at all, (b) names a control they admit is manual, inconsistent, untested or breached, or (c) describes a workaround rather than a designed control. Only use risks actually voiced in the conversation — never invent one.
+
+"Unmitigated" does NOT mean "no control exists". The usual case by far is that a relevant control DOES exist and simply does not reach this exposure — wrong trigger population, too infrequent, too high a threshold, executed manually, covering only part of the population. Such a risk is still unmitigated, and the existing control is still the right starting point for fixing it. Treat "nothing in the library relates to this at all" as the rare exception it is.
+
+Before deciding, you MUST scan the AVAILABLE CONTROL INVENTORY for this specific risk and record that scan in "inventory_scan". Name the two or three closest controls by ID and say for each whether it bears on the risk. Any control your scan finds to bear on the risk — even partially — MUST then appear in "recommended_controls" as an EXTEND. Only write that nothing relates after you have actually looked and can name what you rejected.
+
+For each risk, state what the risk team should DO about it. Every recommendation is one of exactly two actions:
+
+  EXTEND — an existing control in the inventory already bears on this risk but does not reach far enough. Widening it is the recommendation. Put its real ID in "control_id" and its real inventory name in "name", say what it already does for this risk in "current_coverage", and say precisely what it fails to reach in "coverage_gap" (trigger population, scope, frequency, threshold, manual execution).
+  ADD — nothing in the inventory bears on this risk, so a new control has to be built. Set "control_id" to null and leave "current_coverage" and "coverage_gap" as empty strings.
+
+Work the AVAILABLE CONTROL INVENTORY before choosing. It lists every control's ID and what that control actually does — match on what a control does, never on its ID. EXTEND is the more common and more valuable answer: a control that bears on the risk only PARTIALLY is still the right thing to extend, and proposing a brand-new control that duplicates one already in the inventory is a failure of this task. Reach for ADD only when you have been through the inventory and nothing relates.
+
+- NEVER put an ID in "control_id" unless it appears verbatim in the inventory, and never attach a name from the conversation to an inventory ID — a real ID under a wrong name is worse than no citation at all. The same applies to "control_name" in HALF 2.
+- "why_unmitigated" may say that no control exists ONLY when every recommendation for that risk is an ADD.
+- A risk may carry both: EXTEND the existing control AND ADD a new one alongside it.
+
+HALF 2 — INADEQUATE CONTROLS
+For every existing control the conversation shows to be unfit for the risk it is meant to mitigate, give the risk team both (a) how to test it and (b) what to change so it becomes adequate.
+
+HALF 2 is independent of HALF 1 and is never optional. A control that you already cited in HALF 1 as EXISTING belongs here as well when the conversation shows it failing — listing it twice is correct and expected, because the two halves answer different questions. Never drop a control from HALF 2 to avoid repeating yourself. If the owner describes a control as manual, late, self-approved, unreviewed or breached, it belongs here even when it appears nowhere in the inventory (use the owner's own name for it as "control_id" and "control_name" in that case).
+
+Return a JSON object with this EXACT structure — no markdown, no commentary:
+
+{
+  "unmitigated_risks": [
+    {
+      "risk_id": "UR-01",
+      "risk_statement": "<the exposure, one sentence>",
+      "risk_category": "<e.g. Fraud, AML, Process Execution, Third Party, Technology>",
+      "severity": "<HIGH|MEDIUM|LOW>",
+      "owner_statement": "<short quote or close paraphrase of what the control owner actually said>",
+      "inventory_scan": "<the 2-3 closest inventory controls by ID, and for each whether it bears on this risk — e.g. 'RB-CTRL-02 covers synthetic identity but only post-decision on approved loans; RB-CTRL-04 covers KYC at onboarding, not origination screening'>",
+      "why_unmitigated": "<why the current control set does not contain this risk — reference the controls named in inventory_scan rather than claiming nothing exists>",
+      "regulatory_ref": "<citation if the conversation or context supports one, else empty string>",
+      "recommended_controls": [
+        {
+          "action": "<EXTEND|ADD>",
+          "control_id": "<real ID from the inventory when EXTEND, null when ADD>",
+          "name": "<the control's real inventory name when EXTEND, the proposed name when ADD>",
+          "control_type": "<Preventive|Detective|Corrective>",
+          "objective": "<what the control should prevent or detect for this risk>",
+          "design": "<for EXTEND: the change that widens it to cover this risk. For ADD: how the new control operates. 1-2 sentences>",
+          "frequency": "<Continuous|Daily|Weekly|Monthly|Quarterly>",
+          "owner": "<role that should own it>",
+          "current_coverage": "<EXTEND only: what this control already does for this risk. ADD: empty string>",
+          "coverage_gap": "<EXTEND only: what it fails to reach today. ADD: empty string>"
+        }
+      ]
+    }
+  ],
+  "inadequate_controls": [
+    {
+      "control_id": "<real ID from the inventory, or the name the owner used>",
+      "control_name": "<name>",
+      "current_rating": "<Weak|Ineffective|Adequate but insufficient>",
+      "why_inadequate": "<the specific design or operating deficiency>",
+      "linked_risk_id": "<the UR-xx this control fails to mitigate, or empty string>",
+      "test_procedure": {
+        "objective": "<what the test proves>",
+        "population": "<the population to test against>",
+        "sample_size": "<e.g. 25 items, or 100% for low-volume populations>",
+        "sampling_basis": "<Random|Judgmental|Risk-based|Full population — and why>",
+        "test_attributes": ["<attribute to check on each sampled item>", "..."],
+        "evidence_required": ["<artefact to request from the control owner>", "..."],
+        "pass_criteria": "<what constitutes an effective result>",
+        "fail_criteria": "<what constitutes a deficiency>"
+      },
+      "remediation": {
+        "current_deficiency": "<one-line restatement of the gap>",
+        "design_changes": ["<specific change that would raise this control to adequate>", "..."],
+        "target_rating": "<Adequate|Strong>",
+        "residual_risk_after": "<HIGH|MEDIUM-HIGH|MEDIUM|MEDIUM-LOW|LOW>",
+        "owner": "<role accountable for the fix>",
+        "due_days": <integer>
+      }
+    }
+  ],
+  "coverage_summary": "<paragraph of ~100-130 words on how much of the voiced risk the current control set actually covers, and the single biggest hole>",
+  "evidence_trace": ["<what in the transcript or retrieved documents each conclusion rests on>", "..."]
+}
+
+Include 3-5 test_attributes and 2-4 design_changes per inadequate control, and 4-6 evidence_trace items. If the conversation genuinely surfaces no unmitigated risk, return empty arrays and say so in coverage_summary — do not manufacture findings.
+
+Return ONLY valid JSON. No markdown fences. No commentary."""
+
+
+def control_inventory() -> str:
+    """One line per control: the ID plus what that control actually does.
+
+    The description is what makes this usable. A bare list of IDs is a hallucination
+    guard but not a matching aid — the model cannot map a risk onto an ID it has no
+    description for, so it designs a new control instead of citing the real one, and
+    any ID it does reach for gets an arbitrary name attached.
+    """
+    if not collection:
+        return ""
+    try:
+        items = collection.get(
+            where={"$and": [{"doc_type": "Control Narrative"}, {"chunk_index": 0}]},
+            include=["documents", "metadatas"],
+        )
+    except Exception as e:
+        log.error(f"Control inventory lookup failed: {e}")
+        return ""
+
+    lines = {}
+    for doc, meta in zip(items["documents"], items["metadatas"]):
+        control_id = meta.get("control_id")
+        if control_id and control_id not in lines:
+            summary = " ".join(doc.split())[:220]
+            lines[control_id] = f"- {control_id}: {summary}"
+    return "\n".join(lines[cid] for cid in sorted(lines))
+
+
+@app.post("/control_recommendations", response_model=ControlGapResponse)
+async def control_recommendations(request: ControlGapRequest):
+    """Recommend controls for risks the interview left unmitigated, plus test procedures
+    and remediation for controls shown to be unfit. Additive — /rcsa_output is untouched."""
+    if not ENABLE_CONTROL_RECO:
+        raise HTTPException(404, "Control recommendations are not enabled on this deployment")
+
+    if not collection:
+        raise HTTPException(503, "Knowledge base not initialised")
+
+    if not request.messages:
+        raise HTTPException(400, "No conversation provided")
+
+    convo_text = "\n\n".join([
+        f"{m.role.upper()}: {m.content}" for m in request.messages
+    ])
+
+    # Retrieve against the owner's own words — the risk language lives there
+    user_queries = " ".join([m.content for m in request.messages if m.role == "user"])
+    context_block = ""
+    if user_queries.strip():
+        try:
+            results = collection.query(
+                query_texts=[user_queries[:1500]],
+                n_results=CONTROL_GAP_TOP_K,
+                include=["documents", "metadatas"],
+            )
+            if results["documents"] and results["documents"][0]:
+                for doc, meta in zip(results["documents"][0], results["metadatas"][0]):
+                    context_block += f"\n--- {meta['source']} ({meta['control_id']}) ---\n{doc[:600]}\n"
+        except Exception as e:
+            log.error(f"Control gap retrieval failed: {e}")
+
+    try:
+        completion = openai_client.chat.completions.create(
+            model=CHAT_MODEL,
+            messages=[
+                {"role": "system", "content": CONTROL_GAP_PROMPT},
+                {"role": "system", "content": f"AVAILABLE CONTROL INVENTORY (the only IDs you may cite):\n{control_inventory()}"},
+                {"role": "system", "content": f"RETRIEVED CONTEXT FROM KNOWLEDGE BASE:\n{context_block}"},
+                {"role": "user", "content": f"BUSINESS UNIT: {request.business_unit}\n\nINTERVIEW TRANSCRIPT:\n\n{convo_text}\n\nIdentify the unmitigated risks and inadequate controls as JSON."},
+            ],
+            max_tokens=4000,
+            temperature=0.3,
+            response_format={"type": "json_object"},
+        )
+        import json
+        data = json.loads(completion.choices[0].message.content)
+    except Exception as e:
+        log.error(f"Control gap generation failed: {e}")
+        raise HTTPException(500, f"Control recommendation error: {str(e)}")
+
+    unmitigated_risks = data.get("unmitigated_risks", []) or []
+    inadequate_controls = data.get("inadequate_controls", []) or []
+    log.info(f"Control gaps · {len(unmitigated_risks)} unmitigated risks · {len(inadequate_controls)} inadequate controls")
+
+    return ControlGapResponse(
+        business_unit=request.business_unit,
+        unmitigated_risk_count=len(unmitigated_risks),
+        inadequate_control_count=len(inadequate_controls),
+        unmitigated_risks=unmitigated_risks,
+        inadequate_controls=inadequate_controls,
+        coverage_summary=data.get("coverage_summary", ""),
+        evidence_trace=data.get("evidence_trace", []),
         generated_at=datetime.utcnow().isoformat(),
     )
 
