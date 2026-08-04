@@ -1337,6 +1337,20 @@ async function startDictation(){
     cfg.enableDictation();
 
     speechRecognizer = new SDK.SpeechRecognizer(cfg, SDK.AudioConfig.fromDefaultMicrophoneInput());
+
+    // Bias recognition toward control IDs and risk vocabulary — without this the
+    // recogniser mangles exactly the terms the assessment depends on.
+    const phrases = tokenRes.phrases || [];
+    if (phrases.length && SDK.PhraseListGrammar) {
+      try {
+        const grammar = SDK.PhraseListGrammar.fromRecognizer(speechRecognizer);
+        phrases.forEach(p => grammar.addPhrase(p));
+      } catch (e) {
+        // Recognition still works unbiased — not worth failing dictation over
+        console.warn("Phrase list could not be applied:", e);
+      }
+    }
+
     const input = document.getElementById("chat-input");
     voiceBaseText = input.value.trim();
 

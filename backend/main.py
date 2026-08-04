@@ -788,6 +788,68 @@ async def control_recommendations(request: ControlGapRequest):
 
 
 # ── VOICE INPUT — AZURE SPEECH TOKEN ─────────────────────────────────────
+# Dictation's weak point is domain vocabulary, not general speech: left alone the
+# recogniser hears "NBEB" for PEP and "open the count" for "open the account".
+# These phrases are handed to the Speech SDK as a phrase list to bias recognition.
+RISK_TERMS = [
+    # Framework and process language
+    "RCSA", "risk and control self-assessment", "inherent risk", "residual risk",
+    "control owner", "three lines of defence", "first line", "second line", "third line",
+    "control design", "operating effectiveness", "test of design", "test of effectiveness",
+    "segregation of duties", "four-eyes approval", "access review", "attestation",
+    "remediation", "workpaper", "heat map", "exposure index", "risk appetite",
+    "sampling basis", "sample size", "population", "exception report", "control gap",
+    "compensating control", "preventive control", "detective control", "corrective control",
+    # Regulators, rules and standards
+    "FCRA", "FinCEN", "customer due diligence", "CDD", "OCC", "SR 11-7", "PRA SS1/23",
+    "GENIUS Act", "PCI DSS", "FCA", "Consumer Duty", "DISP", "CONC", "Bank Secrecy Act",
+    "OFAC", "OFSI", "BCBS", "EU AI Act", "NIST AI RMF",
+    # Financial-crime and lending vocabulary
+    "KYC", "AML", "politically exposed person", "PEP", "sanctions screening",
+    "synthetic identity", "thin file", "tradeline", "credit bureau", "debt-to-income",
+    "DTI", "loan origination", "origination system", "liveness detection",
+    "first-party fraud", "third-party fraud", "chargeback", "unarranged overdraft",
+    "affordability assessment", "vulnerable customer", "adverse action",
+    # Systems named in the control corpus
+    "nCino", "FiServ DNA", "Equifax", "Experian", "TransUnion",
+    "MetricStream", "ServiceNow", "Archer", "OpenPages", "SharePoint",
+    # Divisions
+    "Retail Banking", "Commercial Lending", "Markets and Trading", "Wealth Management",
+]
+
+# Spoken form of a division prefix, so "RB-CTRL-02" said aloud still lands
+DIVISION_SPOKEN = {"RB": "retail banking", "CL": "commercial lending",
+                   "MT": "markets and trading", "WM": "wealth management"}
+
+
+def speech_phrases() -> List[str]:
+    """Domain vocabulary to bias dictation: real control IDs plus risk terminology.
+
+    Control IDs are read from the vector store rather than hard-coded, so the list
+    cannot drift from the corpus. Each ID is offered in both its written form and a
+    spoken form, because a control owner says "RB control oh two", not the hyphens.
+    """
+    phrases = list(RISK_TERMS)
+    if not collection:
+        return phrases
+    try:
+        items = collection.get(include=["metadatas"])
+    except Exception as e:
+        log.error(f"Phrase list lookup failed: {e}")
+        return phrases
+
+    for control_id in sorted({m.get("control_id") for m in items["metadatas"] if m.get("control_id")}):
+        phrases.append(control_id)
+        parts = control_id.split("-")
+        if len(parts) == 3:
+            division, _, number = parts
+            phrases.append(f"{division} control {number}")
+            spoken = DIVISION_SPOKEN.get(division.upper())
+            if spoken:
+                phrases.append(f"{spoken} control {number}")
+    return phrases
+
+
 @app.get("/speech_token")
 async def speech_token():
     """Mint a short-lived Azure Speech token for the browser.
@@ -814,11 +876,14 @@ async def speech_token():
         log.error(f"Speech token request failed: {type(e).__name__}: {e}")
         raise HTTPException(502, "Could not obtain a speech token from Azure Speech")
 
+    phrases = speech_phrases()
+    log.info(f"Speech token issued · {len(phrases)} phrase-list entries")
     return {
         "token": resp.text,
         "region": AZURE_SPEECH_REGION,
         "language": AZURE_SPEECH_LANGUAGE,
         "expires_in": SPEECH_TOKEN_TTL_SECONDS,
+        "phrases": phrases,
     }
 
 
