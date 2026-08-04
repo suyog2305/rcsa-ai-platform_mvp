@@ -139,6 +139,28 @@
   .chat-input:focus{border-color:var(--blue);background:#fff}
   .chat-input:disabled{opacity:.4;cursor:not-allowed}
 
+  /* Voice input (Azure Speech) */
+  .mic-btn{width:40px;height:40px;flex:0 0 40px;border:1.5px solid var(--border);border-radius:8px;
+    background:#fff;cursor:pointer;font-size:16px;line-height:1;display:none;
+    align-items:center;justify-content:center;transition:all .15s;padding:0}
+  .mic-btn.show{display:flex}
+  .mic-btn:hover:not(:disabled){border-color:var(--blue);background:var(--blue-lt)}
+  .mic-btn:disabled{opacity:.4;cursor:not-allowed}
+  .mic-btn.recording{background:var(--red-lt);border-color:var(--red);animation:micpulse 1.5s infinite}
+  .mic-btn.busy{opacity:.6;cursor:progress}
+  @keyframes micpulse{0%,100%{box-shadow:0 0 0 0 rgba(185,28,28,.35)}70%{box-shadow:0 0 0 7px rgba(185,28,28,0)}}
+  .voice-bar{display:none;align-items:center;gap:9px;padding:7px 12px;border-top:1px solid var(--border);
+    background:var(--red-lt);font-size:11px;color:var(--red);font-weight:600}
+  .voice-bar.show{display:flex}
+  .voice-level{display:flex;align-items:flex-end;gap:2px;height:14px}
+  .voice-level span{width:3px;background:var(--red);border-radius:1px;animation:vlvl .9s infinite ease-in-out}
+  .voice-level span:nth-child(1){height:5px;animation-delay:0s}
+  .voice-level span:nth-child(2){height:11px;animation-delay:.15s}
+  .voice-level span:nth-child(3){height:8px;animation-delay:.3s}
+  .voice-level span:nth-child(4){height:13px;animation-delay:.45s}
+  @keyframes vlvl{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}
+  .voice-hint{margin-left:auto;font-weight:400;color:var(--gray);font-size:10.5px}
+
   /* Sidebar */
   .side{display:flex;flex-direction:column;gap:14px}
   .info-card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;box-shadow:var(--shadow)}
@@ -482,11 +504,21 @@
           </div>
         </div>
 
+        <!-- Recording indicator — only visible while the mic is live -->
+        <div class="voice-bar" id="voice-bar">
+          <span class="voice-level"><span></span><span></span><span></span><span></span></span>
+          <span id="voice-status">Listening…</span>
+          <span id="voice-timer">0:00</span>
+          <span class="voice-hint">Review the text before sending — nothing is sent automatically</span>
+        </div>
+
         <div class="input-wrap">
           <textarea class="chat-input" id="chat-input"
             placeholder="Connect backend first, then type your response..."
             disabled
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
+          <button class="mic-btn" id="mic-btn" onclick="toggleMic()" disabled
+            title="Dictate your answer (Azure Speech)" aria-label="Dictate your answer">🎙</button>
           <button class="btn" id="send-btn" onclick="sendMsg()" disabled>Send</button>
         </div>
       </div>
@@ -781,6 +813,7 @@ let currentView = "interview";
 let rcsaGenerated = false;
 let dashGenerated = false;
 let gapsGenerated = false;
+let voiceAvailable = false;
 
 // ─── Connection ──────────────────────────────────────────────────
 async function connect(){
@@ -806,12 +839,18 @@ async function connect(){
     document.getElementById("tab-gaps").style.display = gapsOn ? "" : "none";
     gapsGenerated = false;
 
+    // Voice input needs both the backend flag and a browser that can capture audio
+    voiceAvailable = !!(health.features && health.features.voice_input)
+      && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    document.getElementById("mic-btn").classList.toggle("show", voiceAvailable);
+
     document.getElementById("kb-count").textContent = `${kb.total_documents} docs · ${kb.total_chunks} chunks`;
     document.getElementById("info-backend").textContent = "Connected";
     document.getElementById("info-docs").textContent = kb.total_documents;
     document.getElementById("info-chunks").textContent = kb.total_chunks;
     document.getElementById("chat-input").disabled = false;
     document.getElementById("send-btn").disabled = false;
+    document.getElementById("mic-btn").disabled = !voiceAvailable;
 
     kbDocs = kb.documents;
     renderKBDocs();
@@ -859,6 +898,8 @@ async function startInterview(){
 
 async function sendMsg(){
   if(!connected) return;
+  // Dictating and sending at once would race the recogniser against the cleared box
+  if(micState !== "idle") stopDictation();
   const input = document.getElementById("chat-input");
   const text = input.value.trim();
   if(!text) return;
@@ -870,6 +911,7 @@ async function sendMsg(){
 
   document.getElementById("chat-input").disabled = true;
   document.getElementById("send-btn").disabled = true;
+  document.getElementById("mic-btn").disabled = true;
   showTyping();
 
   try {
@@ -896,6 +938,7 @@ async function sendMsg(){
 
   document.getElementById("chat-input").disabled = false;
   document.getElementById("send-btn").disabled = false;
+  document.getElementById("mic-btn").disabled = !voiceAvailable;
   document.getElementById("chat-input").focus();
 }
 
@@ -1216,6 +1259,154 @@ function renderDashboard(d){
     </div>
     <div class="reduction-banner">↓ ${ct.reduction_pct || 72}% reduction in cycle time with AI automation</div>
   `;
+}
+
+// ─── Voice input — Azure Speech ──────────────────────────────────
+// The browser never sees the subscription key. It fetches a short-lived token
+// from our backend and streams audio straight to the tenant's own Speech
+// resource. Transcribed text lands in the composer for the control owner to
+// read and edit — it is never sent to the agent automatically.
+const SPEECH_SDK_URL = "https://aka.ms/csspeech/jsbrowserpackageraw";
+let speechRecognizer = null;
+let speechSdkLoading = null;
+let micState = "idle";           // idle | starting | recording | stopping
+let voiceBaseText = "";          // whatever was already typed before dictation began
+let voiceTimerId = null;
+let voiceStartedAt = 0;
+
+function loadSpeechSdk(){
+  if (window.SpeechSDK) return Promise.resolve(window.SpeechSDK);
+  if (speechSdkLoading) return speechSdkLoading;
+  speechSdkLoading = new Promise((resolve, reject) => {
+    const el = document.createElement("script");
+    el.src = SPEECH_SDK_URL;
+    el.onload = () => window.SpeechSDK
+      ? resolve(window.SpeechSDK)
+      : reject(new Error("Speech SDK loaded but did not initialise"));
+    el.onerror = () => reject(new Error("could not load the Azure Speech SDK — check network access to aka.ms"));
+    document.head.appendChild(el);
+  });
+  return speechSdkLoading;
+}
+
+function setMicState(state, label){
+  micState = state;
+  const btn = document.getElementById("mic-btn");
+  const bar = document.getElementById("voice-bar");
+  btn.classList.toggle("recording", state === "recording");
+  btn.classList.toggle("busy", state === "starting" || state === "stopping");
+  btn.textContent = state === "recording" ? "■" : "🎙";
+  btn.title = state === "recording" ? "Stop dictation" : "Dictate your answer (Azure Speech)";
+  bar.classList.toggle("show", state !== "idle");
+  if (label) document.getElementById("voice-status").textContent = label;
+}
+
+function startVoiceTimer(){
+  voiceStartedAt = Date.now();
+  clearInterval(voiceTimerId);
+  voiceTimerId = setInterval(() => {
+    const s = Math.floor((Date.now() - voiceStartedAt) / 1000);
+    document.getElementById("voice-timer").textContent =
+      `${Math.floor(s/60)}:${String(s%60).padStart(2,"0")}`;
+  }, 250);
+}
+
+async function toggleMic(){
+  if (micState === "recording") return stopDictation();
+  if (micState === "idle") return startDictation();
+}
+
+async function startDictation(){
+  if (!connected){ showError("Connect backend first"); return; }
+  setMicState("starting", "Preparing microphone…");
+  document.getElementById("voice-timer").textContent = "0:00";
+
+  try {
+    const [SDK, tokenRes] = await Promise.all([
+      loadSpeechSdk(),
+      fetch(`${API_URL}/speech_token`).then(async r => {
+        if (r.status === 404) throw new Error("voice input is not enabled on this backend");
+        if (!r.ok) throw new Error(`token request failed (${r.status})`);
+        return r.json();
+      }),
+    ]);
+
+    const cfg = SDK.SpeechConfig.fromAuthorizationToken(tokenRes.token, tokenRes.region);
+    cfg.speechRecognitionLanguage = tokenRes.language || "en-GB";
+    // Control owners speak in sentences with pauses; keep dictation punctuated.
+    cfg.enableDictation();
+
+    speechRecognizer = new SDK.SpeechRecognizer(cfg, SDK.AudioConfig.fromDefaultMicrophoneInput());
+
+    // Bias recognition toward control IDs and risk vocabulary — without this the
+    // recogniser mangles exactly the terms the assessment depends on.
+    const phrases = tokenRes.phrases || [];
+    if (phrases.length && SDK.PhraseListGrammar) {
+      try {
+        const grammar = SDK.PhraseListGrammar.fromRecognizer(speechRecognizer);
+        phrases.forEach(p => grammar.addPhrase(p));
+      } catch (e) {
+        // Recognition still works unbiased — not worth failing dictation over
+        console.warn("Phrase list could not be applied:", e);
+      }
+    }
+
+    const input = document.getElementById("chat-input");
+    voiceBaseText = input.value.trim();
+
+    let finalText = "";
+    speechRecognizer.recognizing = (_s, e) => {
+      const interim = (finalText + " " + e.result.text).trim();
+      input.value = (voiceBaseText ? voiceBaseText + " " : "") + interim;
+      input.scrollTop = input.scrollHeight;
+    };
+    speechRecognizer.recognized = (_s, e) => {
+      if (e.result.reason === SDK.ResultReason.RecognizedSpeech && e.result.text) {
+        finalText = (finalText + " " + e.result.text).trim();
+        input.value = (voiceBaseText ? voiceBaseText + " " : "") + finalText;
+        input.scrollTop = input.scrollHeight;
+      }
+    };
+    speechRecognizer.canceled = (_s, e) => {
+      stopDictation();
+      showError(`Dictation stopped: ${e.errorDetails || e.reason}`);
+    };
+
+    await new Promise((resolve, reject) =>
+      speechRecognizer.startContinuousRecognitionAsync(resolve, reject));
+
+    setMicState("recording", "Listening…");
+    startVoiceTimer();
+    hideError();
+  } catch (err) {
+    setMicState("idle");
+    clearInterval(voiceTimerId);
+    disposeRecognizer();
+    const msg = (err && err.name === "NotAllowedError")
+      ? "microphone permission was blocked in the browser"
+      : (err.message || err);
+    showError(`Could not start dictation: ${msg}`);
+  }
+}
+
+function disposeRecognizer(){
+  if (!speechRecognizer) return;
+  try { speechRecognizer.close(); } catch (e) { /* already closed */ }
+  speechRecognizer = null;
+}
+
+function stopDictation(){
+  if (!speechRecognizer){ setMicState("idle"); return; }
+  setMicState("stopping", "Finishing transcription…");
+  clearInterval(voiceTimerId);
+  speechRecognizer.stopContinuousRecognitionAsync(() => {
+    disposeRecognizer();
+    setMicState("idle");
+    document.getElementById("chat-input").focus();
+  }, () => {
+    disposeRecognizer();
+    setMicState("idle");
+  });
 }
 
 // ─── Control Gap Analysis ────────────────────────────────────────

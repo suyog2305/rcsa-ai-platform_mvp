@@ -44,6 +44,17 @@ TOP_K_RETRIEVAL = 4
 ENABLE_CONTROL_RECO = os.getenv("ENABLE_CONTROL_RECO", "false").strip().lower() in ("1", "true", "yes", "on")
 CONTROL_GAP_TOP_K = 10
 
+# Voice input via Azure Speech. Needs the flag AND a key/region — an enabled flag with
+# no resource behind it would show the control owner a mic button that cannot work, so
+# both are required before the frontend is told the feature exists.
+ENABLE_VOICE = os.getenv("ENABLE_VOICE", "false").strip().lower() in ("1", "true", "yes", "on")
+AZURE_SPEECH_KEY = os.getenv("AZURE_SPEECH_KEY", "").strip()
+AZURE_SPEECH_REGION = os.getenv("AZURE_SPEECH_REGION", "").strip()
+AZURE_SPEECH_LANGUAGE = os.getenv("AZURE_SPEECH_LANGUAGE", "en-GB").strip()
+VOICE_AVAILABLE = ENABLE_VOICE and bool(AZURE_SPEECH_KEY and AZURE_SPEECH_REGION)
+# Azure issues a 10-minute token; expire ours earlier so the browser refreshes in time.
+SPEECH_TOKEN_TTL_SECONDS = 540
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s · %(levelname)s · %(message)s")
 log = logging.getLogger("rcsa")
 
@@ -286,7 +297,10 @@ async def root():
         "status": "operational",
         "model": CHAT_MODEL,
         "documents_indexed": collection.count() if collection else 0,
-        "features": {"control_recommendations": ENABLE_CONTROL_RECO},
+        "features": {
+            "control_recommendations": ENABLE_CONTROL_RECO,
+            "voice_input": VOICE_AVAILABLE,
+        },
     }
 
 
@@ -771,6 +785,106 @@ async def control_recommendations(request: ControlGapRequest):
         evidence_trace=data.get("evidence_trace", []),
         generated_at=datetime.utcnow().isoformat(),
     )
+
+
+# ── VOICE INPUT — AZURE SPEECH TOKEN ─────────────────────────────────────
+# Dictation's weak point is domain vocabulary, not general speech: left alone the
+# recogniser hears "NBEB" for PEP and "open the count" for "open the account".
+# These phrases are handed to the Speech SDK as a phrase list to bias recognition.
+RISK_TERMS = [
+    # Framework and process language
+    "RCSA", "risk and control self-assessment", "inherent risk", "residual risk",
+    "control owner", "three lines of defence", "first line", "second line", "third line",
+    "control design", "operating effectiveness", "test of design", "test of effectiveness",
+    "segregation of duties", "four-eyes approval", "access review", "attestation",
+    "remediation", "workpaper", "heat map", "exposure index", "risk appetite",
+    "sampling basis", "sample size", "population", "exception report", "control gap",
+    "compensating control", "preventive control", "detective control", "corrective control",
+    # Regulators, rules and standards
+    "FCRA", "FinCEN", "customer due diligence", "CDD", "OCC", "SR 11-7", "PRA SS1/23",
+    "GENIUS Act", "PCI DSS", "FCA", "Consumer Duty", "DISP", "CONC", "Bank Secrecy Act",
+    "OFAC", "OFSI", "BCBS", "EU AI Act", "NIST AI RMF",
+    # Financial-crime and lending vocabulary
+    "KYC", "AML", "politically exposed person", "PEP", "sanctions screening",
+    "synthetic identity", "thin file", "tradeline", "credit bureau", "debt-to-income",
+    "DTI", "loan origination", "origination system", "liveness detection",
+    "first-party fraud", "third-party fraud", "chargeback", "unarranged overdraft",
+    "affordability assessment", "vulnerable customer", "adverse action",
+    # Systems named in the control corpus
+    "nCino", "FiServ DNA", "Equifax", "Experian", "TransUnion",
+    "MetricStream", "ServiceNow", "Archer", "OpenPages", "SharePoint",
+    # Divisions
+    "Retail Banking", "Commercial Lending", "Markets and Trading", "Wealth Management",
+]
+
+# Spoken form of a division prefix, so "RB-CTRL-02" said aloud still lands
+DIVISION_SPOKEN = {"RB": "retail banking", "CL": "commercial lending",
+                   "MT": "markets and trading", "WM": "wealth management"}
+
+
+def speech_phrases() -> List[str]:
+    """Domain vocabulary to bias dictation: real control IDs plus risk terminology.
+
+    Control IDs are read from the vector store rather than hard-coded, so the list
+    cannot drift from the corpus. Each ID is offered in both its written form and a
+    spoken form, because a control owner says "RB control oh two", not the hyphens.
+    """
+    phrases = list(RISK_TERMS)
+    if not collection:
+        return phrases
+    try:
+        items = collection.get(include=["metadatas"])
+    except Exception as e:
+        log.error(f"Phrase list lookup failed: {e}")
+        return phrases
+
+    for control_id in sorted({m.get("control_id") for m in items["metadatas"] if m.get("control_id")}):
+        phrases.append(control_id)
+        parts = control_id.split("-")
+        if len(parts) == 3:
+            division, _, number = parts
+            phrases.append(f"{division} control {number}")
+            spoken = DIVISION_SPOKEN.get(division.upper())
+            if spoken:
+                phrases.append(f"{spoken} control {number}")
+    return phrases
+
+
+@app.get("/speech_token")
+async def speech_token():
+    """Mint a short-lived Azure Speech token for the browser.
+
+    The subscription key never leaves the server. The browser gets a 10-minute
+    bearer token and streams microphone audio straight to the Azure Speech
+    endpoint in the configured region — so audio goes to the tenant's own Speech
+    resource rather than to a third-party dictation service.
+    """
+    if not VOICE_AVAILABLE:
+        raise HTTPException(404, "Voice input is not enabled on this deployment")
+
+    url = f"https://{AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+    try:
+        import httpx
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, headers={
+                "Ocp-Apim-Subscription-Key": AZURE_SPEECH_KEY,
+                "Content-Length": "0",
+            })
+        resp.raise_for_status()
+    except Exception as e:
+        # Never echo the upstream body — it can carry key material back to the caller
+        log.error(f"Speech token request failed: {type(e).__name__}: {e}")
+        raise HTTPException(502, "Could not obtain a speech token from Azure Speech")
+
+    phrases = speech_phrases()
+    log.info(f"Speech token issued · {len(phrases)} phrase-list entries")
+    return {
+        "token": resp.text,
+        "region": AZURE_SPEECH_REGION,
+        "language": AZURE_SPEECH_LANGUAGE,
+        "expires_in": SPEECH_TOKEN_TTL_SECONDS,
+        "phrases": phrases,
+    }
 
 
 if __name__ == "__main__":
