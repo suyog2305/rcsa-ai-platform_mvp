@@ -159,6 +159,8 @@
   .voice-level span:nth-child(3){height:8px;animation-delay:.3s}
   .voice-level span:nth-child(4){height:13px;animation-delay:.45s}
   @keyframes vlvl{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}
+  .voice-engine{font-weight:600;font-size:10px;padding:2px 8px;border-radius:6px;
+    background:rgba(185,28,28,.12);color:var(--red);letter-spacing:.3px}
   .voice-hint{margin-left:auto;font-weight:400;color:var(--gray);font-size:10.5px}
 
   /* Sidebar */
@@ -509,6 +511,7 @@
           <span class="voice-level"><span></span><span></span><span></span><span></span></span>
           <span id="voice-status">Listening…</span>
           <span id="voice-timer">0:00</span>
+          <span class="voice-engine" id="voice-engine">—</span>
           <span class="voice-hint">Review the text before sending — nothing is sent automatically</span>
         </div>
 
@@ -518,7 +521,7 @@
             disabled
             onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendMsg()}"></textarea>
           <button class="mic-btn" id="mic-btn" onclick="toggleMic()" disabled
-            title="Dictate your answer (Azure Speech)" aria-label="Dictate your answer">🎙</button>
+            title="Dictate your answer" aria-label="Dictate your answer">🎙</button>
           <button class="btn" id="send-btn" onclick="sendMsg()" disabled>Send</button>
         </div>
       </div>
@@ -814,6 +817,9 @@ let rcsaGenerated = false;
 let dashGenerated = false;
 let gapsGenerated = false;
 let voiceAvailable = false;
+let voiceEngine = "none";        // "azure" | "browser" | "none"
+let voiceRegion = "";
+let voiceLanguage = "en-GB";
 
 // ─── Connection ──────────────────────────────────────────────────
 async function connect(){
@@ -839,10 +845,17 @@ async function connect(){
     document.getElementById("tab-gaps").style.display = gapsOn ? "" : "none";
     gapsGenerated = false;
 
-    // Voice input needs both the backend flag and a browser that can capture audio
-    voiceAvailable = !!(health.features && health.features.voice_input)
-      && !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    // Voice needs the backend flag, a way to capture audio, and — on the browser
+    // tier — a browser that actually implements speech recognition.
+    const f = health.features || {};
+    voiceEngine = f.voice_engine || (f.voice_input ? "azure" : "none");
+    voiceLanguage = f.voice_language || "en-GB";
+    voiceRegion = "";
+    const canCapture = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+    voiceAvailable = !!f.voice_input && canCapture
+      && (voiceEngine !== "browser" || !!browserSpeechCtor());
     document.getElementById("mic-btn").classList.toggle("show", voiceAvailable);
+    if (voiceAvailable) setMicState("idle");   // label the button for the actual engine
 
     document.getElementById("kb-count").textContent = `${kb.total_documents} docs · ${kb.total_chunks} chunks`;
     document.getElementById("info-backend").textContent = "Connected";
@@ -1261,18 +1274,77 @@ function renderDashboard(d){
   `;
 }
 
-// ─── Voice input — Azure Speech ──────────────────────────────────
-// The browser never sees the subscription key. It fetches a short-lived token
-// from our backend and streams audio straight to the tenant's own Speech
-// resource. Transcribed text lands in the composer for the control owner to
-// read and edit — it is never sent to the agent automatically.
+// ─── Voice input ─────────────────────────────────────────────────
+// Two engines, chosen by the backend:
+//   azure   — backend mints a short-lived token; the subscription key never
+//             reaches the browser and audio goes to the tenant's own resource.
+//   browser — the browser's built-in speech API. No infrastructure, but audio
+//             IS sent to the browser vendor's speech service, so the recording
+//             bar says so rather than implying it stays in the tenant.
+// Either way the transcript lands in the composer for the control owner to read
+// and edit — it is never sent to the agent automatically.
 const SPEECH_SDK_URL = "https://aka.ms/csspeech/jsbrowserpackageraw";
-let speechRecognizer = null;
+let speechRecognizer = null;     // Azure recogniser
+let browserRecognition = null;   // Web Speech recogniser
 let speechSdkLoading = null;
 let micState = "idle";           // idle | starting | recording | stopping
 let voiceBaseText = "";          // whatever was already typed before dictation began
 let voiceTimerId = null;
 let voiceStartedAt = 0;
+let voiceStopping = false;       // distinguishes a deliberate stop from a dropout
+
+function browserSpeechCtor(){
+  return window.SpeechRecognition || window.webkitSpeechRecognition || null;
+}
+
+// Spoken control IDs come back as "RB control 02" or "R B control zero two".
+// Normalising them to the canonical form is deterministic and fixes the single
+// most important piece of vocabulary in the transcript, on either engine.
+const SPOKEN_DIGITS = {zero:"0", oh:"0", one:"1", two:"2", three:"3", four:"4",
+                       five:"5", six:"6", seven:"7", eight:"8", nine:"9", ten:"10",
+                       eleven:"11", twelve:"12"};
+const DIVISION_WORDS = {
+  "retail banking": "RB", "commercial lending": "CL",
+  "markets and trading": "MT", "wealth management": "WM",
+};
+
+function normaliseControlIds(text){
+  if (!text) return text;
+  let out = text;
+  // "retail banking control 2" -> "RB control 2"
+  for (const [words, code] of Object.entries(DIVISION_WORDS)){
+    out = out.replace(new RegExp(words + "\\s+control\\b", "gi"), code + " control");
+  }
+  // "R B control oh two" / "RB control 2" / "rb-ctrl-2" -> "RB-CTRL-02".
+  // The number may be spoken as two words ("oh two", "zero five"), so match that
+  // form before the single-word one — otherwise "oh" consumes the match alone and
+  // leaves "two" stranded in the transcript.
+  const words = Object.keys(SPOKEN_DIGITS).join("|");
+  const num = `\\d{1,2}|(?:zero|oh)\\s+(?:${words})|${words}`;
+  const re = new RegExp(
+    `\\b([A-Za-z])\\s?([A-Za-z])[\\s-]*(?:control|ctrl)[\\s-]*(${num})\\b`, "gi");
+
+  out = out.replace(re, (match, a, b, spoken) => {
+    const division = (a + b).toUpperCase();
+    if (!["RB","CL","MT","WM"].includes(division)) return match;
+    const s = String(spoken).toLowerCase().trim();
+    let n;
+    if (/^\d+$/.test(s)) {
+      n = s;
+    } else {
+      const parts = s.split(/\s+/);
+      if (parts.length === 2) {
+        const hi = SPOKEN_DIGITS[parts[0]], lo = SPOKEN_DIGITS[parts[1]];
+        if (hi !== undefined && lo !== undefined) n = hi + lo;
+      } else {
+        n = SPOKEN_DIGITS[s];
+      }
+    }
+    if (n === undefined) return match;
+    return `${division}-CTRL-${String(n).padStart(2, "0")}`;
+  });
+  return out;
+}
 
 function loadSpeechSdk(){
   if (window.SpeechSDK) return Promise.resolve(window.SpeechSDK);
@@ -1296,9 +1368,14 @@ function setMicState(state, label){
   btn.classList.toggle("recording", state === "recording");
   btn.classList.toggle("busy", state === "starting" || state === "stopping");
   btn.textContent = state === "recording" ? "■" : "🎙";
-  btn.title = state === "recording" ? "Stop dictation" : "Dictate your answer (Azure Speech)";
+  btn.title = state === "recording" ? "Stop dictation"
+    : `Dictate your answer (${voiceEngine === "azure" ? "Azure Speech" : "browser speech"})`;
   bar.classList.toggle("show", state !== "idle");
   if (label) document.getElementById("voice-status").textContent = label;
+  // Say plainly where the audio goes — a control owner and a CISO will both ask
+  document.getElementById("voice-engine").textContent = voiceEngine === "azure"
+    ? `Azure Speech · ${voiceRegion || "tenant region"}`
+    : "Browser speech service";
 }
 
 function startVoiceTimer(){
@@ -1320,7 +1397,66 @@ async function startDictation(){
   if (!connected){ showError("Connect backend first"); return; }
   setMicState("starting", "Preparing microphone…");
   document.getElementById("voice-timer").textContent = "0:00";
+  voiceStopping = false;
+  voiceBaseText = document.getElementById("chat-input").value.trim();
+  return voiceEngine === "azure" ? startAzureDictation() : startBrowserDictation();
+}
 
+// ── Browser Web Speech (MVP tier) ──
+function startBrowserDictation(){
+  const Ctor = browserSpeechCtor();
+  if (!Ctor){
+    setMicState("idle");
+    showError("Could not start dictation: this browser has no built-in speech recognition — try Chrome or Edge.");
+    return;
+  }
+  const input = document.getElementById("chat-input");
+  let finalText = "";
+
+  browserRecognition = new Ctor();
+  browserRecognition.lang = voiceLanguage || "en-GB";
+  browserRecognition.continuous = true;
+  browserRecognition.interimResults = true;
+
+  browserRecognition.onresult = (event) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i++){
+      const chunk = event.results[i][0].transcript;
+      if (event.results[i].isFinal) finalText = (finalText + " " + normaliseControlIds(chunk)).trim();
+      else interim += chunk;
+    }
+    const combined = (finalText + " " + interim).trim();
+    input.value = (voiceBaseText ? voiceBaseText + " " : "") + combined;
+    input.scrollTop = input.scrollHeight;
+  };
+  browserRecognition.onerror = (e) => {
+    const msg = e.error === "not-allowed" ? "microphone permission was blocked in the browser"
+      : e.error === "no-speech" ? "no speech was detected"
+      : e.error === "network" ? "the browser's speech service could not be reached"
+      : e.error;
+    stopDictation();
+    showError(`Dictation stopped: ${msg}`);
+  };
+  // continuous mode still ends itself on a long pause — restart unless we meant to stop
+  browserRecognition.onend = () => {
+    if (voiceStopping || micState === "idle") return;
+    try { browserRecognition.start(); } catch (e) { /* already restarting */ }
+  };
+
+  try {
+    browserRecognition.start();
+  } catch (err) {
+    setMicState("idle");
+    showError(`Could not start dictation: ${err.message || err}`);
+    return;
+  }
+  setMicState("recording", "Listening…");
+  startVoiceTimer();
+  hideError();
+}
+
+// ── Azure Speech (enterprise tier) ──
+async function startAzureDictation(){
   try {
     const [SDK, tokenRes] = await Promise.all([
       loadSpeechSdk(),
@@ -1331,6 +1467,7 @@ async function startDictation(){
       }),
     ]);
 
+    voiceRegion = tokenRes.region || "";
     const cfg = SDK.SpeechConfig.fromAuthorizationToken(tokenRes.token, tokenRes.region);
     cfg.speechRecognitionLanguage = tokenRes.language || "en-GB";
     // Control owners speak in sentences with pauses; keep dictation punctuated.
@@ -1352,7 +1489,6 @@ async function startDictation(){
     }
 
     const input = document.getElementById("chat-input");
-    voiceBaseText = input.value.trim();
 
     let finalText = "";
     speechRecognizer.recognizing = (_s, e) => {
@@ -1362,7 +1498,7 @@ async function startDictation(){
     };
     speechRecognizer.recognized = (_s, e) => {
       if (e.result.reason === SDK.ResultReason.RecognizedSpeech && e.result.text) {
-        finalText = (finalText + " " + e.result.text).trim();
+        finalText = (finalText + " " + normaliseControlIds(e.result.text)).trim();
         input.value = (voiceBaseText ? voiceBaseText + " " : "") + finalText;
         input.scrollTop = input.scrollHeight;
       }
@@ -1390,12 +1526,24 @@ async function startDictation(){
 }
 
 function disposeRecognizer(){
+  if (browserRecognition){
+    try { browserRecognition.onend = null; browserRecognition.stop(); } catch (e) { /* already stopped */ }
+    browserRecognition = null;
+  }
   if (!speechRecognizer) return;
   try { speechRecognizer.close(); } catch (e) { /* already closed */ }
   speechRecognizer = null;
 }
 
 function stopDictation(){
+  voiceStopping = true;
+  if (browserRecognition){
+    clearInterval(voiceTimerId);
+    disposeRecognizer();
+    setMicState("idle");
+    document.getElementById("chat-input").focus();
+    return;
+  }
   if (!speechRecognizer){ setMicState("idle"); return; }
   setMicState("stopping", "Finishing transcription…");
   clearInterval(voiceTimerId);
